@@ -107,10 +107,10 @@
 
 ### 6. 后台 API 与 UI
 扩展 API Key 管理接口返回与入参：
-- `GET /admin/api/api-keys`
-- `GET /admin/api/api-keys/{id}`
-- `POST /admin/api/api-keys`
-- `PUT /admin/api/api-keys/{id}`
+- `GET /kiro_admin/api/api-keys`
+- `GET /kiro_admin/api/api-keys/{id}`
+- `POST /kiro_admin/api/api-keys`
+- `PUT /kiro_admin/api/api-keys/{id}`
 
 返回字段新增：
 - `boundAccountIds`

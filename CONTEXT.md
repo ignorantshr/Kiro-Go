@@ -20,7 +20,7 @@ This repo uses a single-context domain-doc layout: look for `CONTEXT.md` at the 
 
 ```bash
 go build -o kiro-go .          # build
-./kiro-go                      # run (serves :8080, admin at /admin)
+./kiro-go                      # run (serves :8080, admin at /kiro_admin)
 go test ./...                  # all tests
 go test ./proxy/ -run TestName # single test (most tests live in ./proxy)
 go vet ./...                   # vet
@@ -65,7 +65,7 @@ For an inference request (`handleClaudeMessages` / `handleOpenAIChat` / `handleO
 
 ### Inside `proxy/`
 
-- **`handler.go`** (~3k lines) — HTTP routing, all endpoint handlers (inference, `/v1/models`, `/v1/stats`, health), the `/admin/api/*` admin API, and the background goroutines (`backgroundRefresh` every 30min refreshes tokens/usage; `backgroundStatsSaver` every 30s persists stats).
+- **`handler.go`** (~3k lines) — HTTP routing, all endpoint handlers (inference, `/v1/models`, `/v1/stats`, health), the `/kiro_admin/api/*` admin API, and the background goroutines (`backgroundRefresh` every 30min refreshes tokens/usage; `backgroundStatsSaver` every 30s persists stats).
 - **`translator.go`** (~2k lines) — request/response format conversion. This is where most domain complexity lives (see invariants below).
 - **`kiro.go`** — upstream call (`CallKiroAPI`) and the hand-written **AWS Event Stream decoder** (`parseEventStream`: 12-byte prelude → headers → payload framing). Defines the `KiroPayload` wire types and `KiroStreamCallback`.
 - **`kiro_api.go`** — REST calls to CodeWhisperer (`GetUsageLimits`, `GetUserInfo`, `ListAvailableModels`).

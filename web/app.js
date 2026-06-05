@@ -96,7 +96,7 @@
   async function loadLocale(lang) {
     if (dict[lang]) return dict[lang];
     try {
-      const res = await fetch('/admin/locales/' + lang + '.json?v=' + Date.now(), { cache: 'no-store' });
+      const res = await fetch('/kiro_admin/locales/' + lang + '.json?v=' + Date.now(), { cache: 'no-store' });
       dict[lang] = await res.json();
     } catch (e) {
       dict[lang] = {};
@@ -579,7 +579,7 @@
     opts = opts || {};
     opts.headers = Object.assign({ 'X-Admin-Password': password }, opts.headers || {});
     if (opts.body && !opts.headers['Content-Type']) opts.headers['Content-Type'] = 'application/json';
-    return fetch('/admin/api' + path, opts);
+    return fetch('/kiro_admin/api' + path, opts);
   }
 
   // Login

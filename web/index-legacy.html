@@ -1854,14 +1854,14 @@
                 return;
             }
             try {
-                const res = await fetch('/admin/api/status', { headers: { 'X-Admin-Password': password } });
+                const res = await fetch('/kiro_admin/api/status', { headers: { 'X-Admin-Password': password } });
                 if (res.ok) { showMain(); loadData(); }
             } catch (e) { }
         }
         async function login() {
             password = document.getElementById('pwdField').value;
             try {
-                const res = await fetch('/admin/api/status', { headers: { 'X-Admin-Password': password } });
+                const res = await fetch('/kiro_admin/api/status', { headers: { 'X-Admin-Password': password } });
                 if (res.ok) {
                     localStorage.setItem('admin_password', password);
                     localStorage.setItem('admin_login_time', Date.now().toString());
@@ -1894,7 +1894,7 @@
             setTimeout(() => checkUpdate(false), 2000);
         }
         async function loadStats() {
-            const res = await fetch('/admin/api/status', { headers: { 'X-Admin-Password': password } });
+            const res = await fetch('/kiro_admin/api/status', { headers: { 'X-Admin-Password': password } });
             const d = await res.json();
             document.getElementById('statAccounts').textContent = d.accounts || 0;
             document.getElementById('statRequests').textContent = d.totalRequests || 0;
@@ -1904,7 +1904,7 @@
             document.getElementById('statCredits').textContent = (d.totalCredits || 0).toFixed(1);
         }
         async function loadAccounts() {
-            const res = await fetch('/admin/api/accounts', { headers: { 'X-Admin-Password': password } });
+            const res = await fetch('/kiro_admin/api/accounts', { headers: { 'X-Admin-Password': password } });
             accountsData = await res.json();
             renderAccounts();
         }
@@ -1965,7 +1965,7 @@
             const confirmKey = 'batch.confirm' + action.charAt(0).toUpperCase() + action.slice(1);
             if (!confirm(t(confirmKey, ids.length))) return;
             try {
-                const res = await fetch('/admin/api/accounts/batch', {
+                const res = await fetch('/kiro_admin/api/accounts/batch', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
                     body: JSON.stringify({ ids, action })
@@ -1989,7 +1989,7 @@
             let success = 0, fail = 0;
             for (const id of ids) {
                 try {
-                    const res = await fetch('/admin/api/accounts/' + id + '/models/refresh', {
+                    const res = await fetch('/kiro_admin/api/accounts/' + id + '/models/refresh', {
                         method: 'POST', headers: { 'X-Admin-Password': password }
                     });
                     const d = await res.json();
@@ -2004,7 +2004,7 @@
         async function refreshAllModels() {
             if (!confirm(t('models.confirmRefreshAll'))) return;
             try {
-                const res = await fetch('/admin/api/accounts/models/refresh', {
+                const res = await fetch('/kiro_admin/api/accounts/models/refresh', {
                     method: 'POST', headers: { 'X-Admin-Password': password }
                 });
                 const d = await res.json();
@@ -2015,7 +2015,7 @@
         }
         async function refreshAccountModels(id) {
             try {
-                const res = await fetch('/admin/api/accounts/' + id + '/models/refresh', {
+                const res = await fetch('/kiro_admin/api/accounts/' + id + '/models/refresh', {
                     method: 'POST', headers: { 'X-Admin-Password': password }
                 });
                 const d = await res.json();
@@ -2167,7 +2167,7 @@
             const card = event.target.closest('.account-card');
             if (card) card.classList.add('loading');
             try {
-                const res = await fetch('/admin/api/accounts/' + id + '/refresh', { method: 'POST', headers: { 'X-Admin-Password': password } });
+                const res = await fetch('/kiro_admin/api/accounts/' + id + '/refresh', { method: 'POST', headers: { 'X-Admin-Password': password } });
                 const d = await res.json();
                 if (d.success) { loadAccounts(); } else { alert(t('accounts.refreshFailed') + ': ' + d.error); }
             } catch (e) { alert(t('accounts.refreshFailed')); }
@@ -2232,7 +2232,7 @@
             const container = document.getElementById('modelsList');
             container.innerHTML = '<p style="color:#64748b">' + t('detail.loading') + '</p>';
             try {
-                const res = await fetch('/admin/api/accounts/' + id + '/models', { headers: { 'X-Admin-Password': password } });
+                const res = await fetch('/kiro_admin/api/accounts/' + id + '/models', { headers: { 'X-Admin-Password': password } });
                 const d = await res.json();
                 if (d.success && d.models) {
                     // 按 credit 比例排序（auto 模型优先）
@@ -2258,7 +2258,7 @@
         function closeDetailModal() { document.getElementById('detailModal').classList.remove('active'); }
         async function generateMachineId() {
             try {
-                const res = await fetch('/admin/api/generate-machine-id', { headers: { 'X-Admin-Password': password } });
+                const res = await fetch('/kiro_admin/api/generate-machine-id', { headers: { 'X-Admin-Password': password } });
                 const d = await res.json();
                 if (d.machineId) document.getElementById('machineIdInput').value = d.machineId;
             } catch (e) { alert(t('detail.generateFailed')); }
@@ -2269,7 +2269,7 @@
                 alert(t('detail.machineIdError')); return;
             }
             try {
-                const res = await fetch('/admin/api/accounts/' + id, {
+                const res = await fetch('/kiro_admin/api/accounts/' + id, {
                     method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
                     body: JSON.stringify({ machineId })
                 });
@@ -2280,7 +2280,7 @@
         async function saveWeight(id) {
             const weight = parseInt(document.getElementById('weightInput').value) || 0;
             try {
-                const res = await fetch('/admin/api/accounts/' + id, {
+                const res = await fetch('/kiro_admin/api/accounts/' + id, {
                     method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
                     body: JSON.stringify({ weight })
                 });
@@ -2294,7 +2294,7 @@
             overageWeight = Math.max(1, Math.min(10, overageWeight));
             document.getElementById('overageWeightInput').value = overageWeight;
             try {
-                const res = await fetch('/admin/api/accounts/' + id, {
+                const res = await fetch('/kiro_admin/api/accounts/' + id, {
                     method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
                     body: JSON.stringify({ allowOverage, overageWeight })
                 });
@@ -2308,7 +2308,7 @@
                 alert('Format: socks5://host:port or http://host:port'); return;
             }
             try {
-                const res = await fetch('/admin/api/accounts/' + id, {
+                const res = await fetch('/kiro_admin/api/accounts/' + id, {
                     method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
                     body: JSON.stringify({ proxyURL })
                 });
@@ -2362,7 +2362,7 @@
             if (ex) ex.remove();
             let models = [];
             try {
-                const res = await fetch('/admin/api/accounts/' + id + '/models/cached', {
+                const res = await fetch('/kiro_admin/api/accounts/' + id + '/models/cached', {
                     headers: { 'X-Admin-Password': password }
                 });
                 const d = await res.json();
@@ -2418,7 +2418,7 @@
             addTestLog(t('accounts.testLog.start', email, model, proxy), 'info');
             try {
                 const startTime = Date.now();
-                const res = await fetch('/admin/api/accounts/' + id + '/test', {
+                const res = await fetch('/kiro_admin/api/accounts/' + id + '/test', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
                     body: JSON.stringify({ model })
@@ -2449,7 +2449,7 @@
                 alert('Format: socks5://host:port or http://host:port'); return;
             }
             try {
-                const res = await fetch('/admin/api/accounts/' + id, {
+                const res = await fetch('/kiro_admin/api/accounts/' + id, {
                     method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
                     body: JSON.stringify({ proxyURL })
                 });
@@ -2460,7 +2460,7 @@
         async function quickSetWeight(id, value) {
             const weight = parseInt(value) || 0;
             try {
-                await fetch('/admin/api/accounts/' + id, {
+                await fetch('/kiro_admin/api/accounts/' + id, {
                     method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
                     body: JSON.stringify({ weight })
                 });
@@ -2469,7 +2469,7 @@
             } catch (e) { /* silent */ }
         }
         async function loadSettings() {
-            const res = await fetch('/admin/api/settings', { headers: { 'X-Admin-Password': password } });
+            const res = await fetch('/kiro_admin/api/settings', { headers: { 'X-Admin-Password': password } });
             const d = await res.json();
             document.getElementById('requireApiKey').checked = d.requireApiKey;
             document.getElementById('apiKeyInput').value = d.apiKey || '';
@@ -2480,14 +2480,14 @@
             loadPromptFilter();
         }
         async function loadThinkingConfig() {
-            const res = await fetch('/admin/api/thinking', { headers: { 'X-Admin-Password': password } });
+            const res = await fetch('/kiro_admin/api/thinking', { headers: { 'X-Admin-Password': password } });
             const d = await res.json();
             document.getElementById('thinkingSuffix').value = d.suffix || '-thinking';
             document.getElementById('openaiThinkingFormat').value = d.openaiFormat || 'reasoning_content';
             document.getElementById('claudeThinkingFormat').value = d.claudeFormat || 'thinking';
         }
         async function saveThinkingConfig() {
-            const res = await fetch('/admin/api/thinking', {
+            const res = await fetch('/kiro_admin/api/thinking', {
                 method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
                 body: JSON.stringify({ suffix: document.getElementById('thinkingSuffix').value || '-thinking', openaiFormat: document.getElementById('openaiThinkingFormat').value, claudeFormat: document.getElementById('claudeThinkingFormat').value })
             });
@@ -2495,13 +2495,13 @@
             if (d.success) { alert(t('settings.thinkingSaved')); } else { alert(t('common.saveFailed') + ': ' + d.error); }
         }
         async function loadEndpointConfig() {
-            const res = await fetch('/admin/api/endpoint', { headers: { 'X-Admin-Password': password } });
+            const res = await fetch('/kiro_admin/api/endpoint', { headers: { 'X-Admin-Password': password } });
             const d = await res.json();
             document.getElementById('preferredEndpoint').value = d.preferredEndpoint || 'auto';
             document.getElementById('endpointFallback').checked = d.endpointFallback !== false;
         }
         async function saveEndpointConfig() {
-            const res = await fetch('/admin/api/endpoint', {
+            const res = await fetch('/kiro_admin/api/endpoint', {
                 method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
                 body: JSON.stringify({ preferredEndpoint: document.getElementById('preferredEndpoint').value, endpointFallback: document.getElementById('endpointFallback').checked })
             });
@@ -2509,7 +2509,7 @@
             if (d.success) { alert(t('settings.endpointSaved')); } else { alert(t('common.saveFailed') + ': ' + d.error); }
         }
         async function loadProxyConfig() {
-            const res = await fetch('/admin/api/proxy', { headers: { 'X-Admin-Password': password } });
+            const res = await fetch('/kiro_admin/api/proxy', { headers: { 'X-Admin-Password': password } });
             const d = await res.json();
             const proxyURL = d.proxyURL || '';
             if (!proxyURL) {
@@ -2547,7 +2547,7 @@
                 const auth = user ? (pass ? `${encodeURIComponent(user)}:${encodeURIComponent(pass)}@` : `${encodeURIComponent(user)}@`) : '';
                 proxyURL = `${type}://${auth}${host}:${port}`;
             }
-            const res = await fetch('/admin/api/proxy', {
+            const res = await fetch('/kiro_admin/api/proxy', {
                 method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
                 body: JSON.stringify({ proxyURL })
             });
@@ -2556,7 +2556,7 @@
         }
         var promptRules = [];
         async function loadPromptFilter() {
-            const res = await fetch('/admin/api/prompt-filter', { headers: { 'X-Admin-Password': password } });
+            const res = await fetch('/kiro_admin/api/prompt-filter', { headers: { 'X-Admin-Password': password } });
             const d = await res.json();
             document.getElementById('filterClaudeCode').checked = !!d.filterClaudeCode;
             document.getElementById('filterEnvNoise').checked = !!d.filterEnvNoise;
@@ -2565,7 +2565,7 @@
             renderPromptRules();
         }
         async function savePromptFilter() {
-            const res = await fetch('/admin/api/prompt-filter', {
+            const res = await fetch('/kiro_admin/api/prompt-filter', {
                 method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
                 body: JSON.stringify({
                     filterClaudeCode: document.getElementById('filterClaudeCode').checked,
@@ -2620,7 +2620,7 @@
             if (requireApiKey && !apiKeyInput.value.trim()) {
                 generateApiKey();
             }
-            await fetch('/admin/api/settings', {
+            await fetch('/kiro_admin/api/settings', {
                 method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
                 body: JSON.stringify({ requireApiKey, apiKey: apiKeyInput.value })
             });
@@ -2628,7 +2628,7 @@
         }
         async function saveOverUsageConfig() {
             const allowOverUsage = document.getElementById('allowOverUsage').checked;
-            await fetch('/admin/api/settings', {
+            await fetch('/kiro_admin/api/settings', {
                 method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
                 body: JSON.stringify({ allowOverUsage })
             });
@@ -2637,7 +2637,7 @@
         async function changePassword() {
             const newPwd = document.getElementById('newPassword').value;
             if (!newPwd) return alert(t('settings.passwordRequired'));
-            await fetch('/admin/api/settings', {
+            await fetch('/kiro_admin/api/settings', {
                 method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
                 body: JSON.stringify({ password: newPwd })
             });
@@ -2648,7 +2648,7 @@
         }
         async function resetStats() {
             if (!confirm(t('settings.confirmReset'))) return;
-            await fetch('/admin/api/stats/reset', { method: 'POST', headers: { 'X-Admin-Password': password } });
+            await fetch('/kiro_admin/api/stats/reset', { method: 'POST', headers: { 'X-Admin-Password': password } });
             loadStats();
         }
         function switchTab(tab) {
@@ -2657,7 +2657,7 @@
             document.getElementById('tab' + tab.charAt(0).toUpperCase() + tab.slice(1)).classList.remove('hidden');
         }
         async function toggleAccount(id, enabled) {
-            await fetch('/admin/api/accounts/' + id, {
+            await fetch('/kiro_admin/api/accounts/' + id, {
                 method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
                 body: JSON.stringify({ enabled })
             });
@@ -2665,7 +2665,7 @@
         }
         async function deleteAccount(id) {
             if (!confirm(t('accounts.confirmDelete'))) return;
-            await fetch('/admin/api/accounts/' + id, { method: 'DELETE', headers: { 'X-Admin-Password': password } });
+            await fetch('/kiro_admin/api/accounts/' + id, { method: 'DELETE', headers: { 'X-Admin-Password': password } });
             loadAccounts(); loadStats();
         }
         function formatNum(n) {
@@ -2681,7 +2681,7 @@
         async function copyAccountJSON(accountId, buttonElement) {
             try {
                 // 从后端获取完整账号信息（包含敏感字段）
-                const res = await fetch('/admin/api/accounts/' + accountId + '/full', {
+                const res = await fetch('/kiro_admin/api/accounts/' + accountId + '/full', {
                     headers: { 'X-Admin-Password': password }
                 });
 
@@ -2835,7 +2835,7 @@
             // 根据是否有 clientData 判断认证方式
             const authMethod = clientData ? 'idc' : 'social';
             const payload = { refreshToken: tokenData.refreshToken, accessToken: tokenData.accessToken || '', clientId: clientData?.clientId || '', clientSecret: clientData?.clientSecret || '', authMethod: authMethod, provider: provider };
-            const res = await fetch('/admin/api/auth/credentials', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password }, body: JSON.stringify(payload) });
+            const res = await fetch('/kiro_admin/api/auth/credentials', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password }, body: JSON.stringify(payload) });
             const d = await res.json();
             if (d.success) { closeModal(); loadAccounts(); loadStats(); alert(t('local.importSuccess') + ': ' + (d.account?.email || d.account?.id)); autoRefreshNewAccount(d.account?.id); }
             else alert(t('common.failed') + ': ' + d.error);
@@ -2880,7 +2880,7 @@
                     if (!provider && authMethod === 'idc') provider = 'BuilderId';
                     const payload = { refreshToken: item.refreshToken, accessToken: item.accessToken || '', clientId: item.clientId || '', clientSecret: item.clientSecret || '', authMethod: authMethod, provider: provider, region: item.region || 'us-east-1' };
                     try {
-                        const res = await fetch('/admin/api/auth/credentials', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password }, body: JSON.stringify(payload) });
+                        const res = await fetch('/kiro_admin/api/auth/credentials', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password }, body: JSON.stringify(payload) });
                         const d = await res.json();
                         if (d.success) { success++; if (d.account?.id) newIds.push(d.account.id); } else { failed++; errors.push(d.error || 'unknown'); }
                     } catch { failed++; errors.push('request failed'); }
@@ -2897,13 +2897,13 @@
             if (!refreshToken) { alert(t('cookie.refreshTokenMissing')); return; }
             const provider = document.getElementById('cookieProvider').value;
             const payload = { refreshToken, accessToken: '', clientId: '', clientSecret: '', authMethod: 'social', provider };
-            const res = await fetch('/admin/api/auth/credentials', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password }, body: JSON.stringify(payload) });
+            const res = await fetch('/kiro_admin/api/auth/credentials', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password }, body: JSON.stringify(payload) });
             const d = await res.json();
             if (d.success) { closeModal(); loadAccounts(); loadStats(); alert(t('cookie.importSuccess') + ': ' + (d.account?.email || d.account?.id)); autoRefreshNewAccount(d.account?.id); }
             else alert(t('common.failed') + ': ' + d.error);
         }
         async function importSsoToken() {
-            const res = await fetch('/admin/api/auth/sso-token', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password }, body: JSON.stringify({ bearerToken: document.getElementById('ssoToken').value, region: document.getElementById('ssoRegion').value }) });
+            const res = await fetch('/kiro_admin/api/auth/sso-token', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password }, body: JSON.stringify({ bearerToken: document.getElementById('ssoToken').value, region: document.getElementById('ssoRegion').value }) });
             const d = await res.json();
             if (d.success) {
                 closeModal(); loadAccounts(); loadStats();
@@ -2919,7 +2919,7 @@
         let builderIdPollTimer = null;
         async function startBuilderIdLogin() {
             const region = document.getElementById('builderIdRegion').value || 'us-east-1';
-            const res = await fetch('/admin/api/auth/builderid/start', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password }, body: JSON.stringify({ region }) });
+            const res = await fetch('/kiro_admin/api/auth/builderid/start', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password }, body: JSON.stringify({ region }) });
             const d = await res.json();
             if (d.sessionId) {
                 builderIdSession = d.sessionId;
@@ -2932,7 +2932,7 @@
         }
         function pollBuilderIdAuth(interval) {
             builderIdPollTimer = setTimeout(async () => {
-                const res = await fetch('/admin/api/auth/builderid/poll', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password }, body: JSON.stringify({ sessionId: builderIdSession }) });
+                const res = await fetch('/kiro_admin/api/auth/builderid/poll', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password }, body: JSON.stringify({ sessionId: builderIdSession }) });
                 const d = await res.json();
                 if (d.completed) {
                     closeModal(); loadAccounts(); loadStats();
@@ -2955,12 +2955,12 @@
         let iamSession = '';
         async function startIamSso() {
             if (iamSession) {
-                const res = await fetch('/admin/api/auth/iam-sso/complete', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password }, body: JSON.stringify({ sessionId: iamSession, callbackUrl: document.getElementById('iamCallback').value }) });
+                const res = await fetch('/kiro_admin/api/auth/iam-sso/complete', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password }, body: JSON.stringify({ sessionId: iamSession, callbackUrl: document.getElementById('iamCallback').value }) });
                 const d = await res.json();
                 if (d.success) { closeModal(); loadAccounts(); loadStats(); alert(t('builderid.success') + ': ' + (d.account?.email || d.account?.id)); autoRefreshNewAccount(d.account?.id); }
                 else alert(t('common.failed') + ': ' + d.error);
             } else {
-                const res = await fetch('/admin/api/auth/iam-sso/start', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password }, body: JSON.stringify({ startUrl: document.getElementById('iamStartUrl').value, region: document.getElementById('iamRegion').value }) });
+                const res = await fetch('/kiro_admin/api/auth/iam-sso/start', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password }, body: JSON.stringify({ startUrl: document.getElementById('iamStartUrl').value, region: document.getElementById('iamRegion').value }) });
                 const d = await res.json();
                 if (d.authorizeUrl) {
                     iamSession = d.sessionId;
@@ -2976,7 +2976,7 @@
         let currentVersion = '';
         async function loadVersion() {
             try {
-                const res = await fetch('/admin/api/version', { headers: { 'X-Admin-Password': password } });
+                const res = await fetch('/kiro_admin/api/version', { headers: { 'X-Admin-Password': password } });
                 const d = await res.json();
                 currentVersion = d.version || '';
                 document.getElementById('versionBadge').textContent = 'v' + currentVersion;
@@ -3087,7 +3087,7 @@
 
         async function getExportData() {
             if (exportSelectedIds.size === 0) { alert(t('export.noSelection')); return null; }
-            const res = await fetch('/admin/api/export', {
+            const res = await fetch('/kiro_admin/api/export', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
                 body: JSON.stringify({ ids: Array.from(exportSelectedIds) })
@@ -3135,7 +3135,7 @@
         // ==================== 添加账号后自动刷新 ====================
         async function autoRefreshNewAccount(accountId) {
             try {
-                await fetch('/admin/api/accounts/' + accountId + '/refresh', {
+                await fetch('/kiro_admin/api/accounts/' + accountId + '/refresh', {
                     method: 'POST', headers: { 'X-Admin-Password': password }
                 });
             } catch (e) { }

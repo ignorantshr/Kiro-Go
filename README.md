@@ -74,13 +74,13 @@ zeabur deploy
 
 > Run the commands from the project root. The CLI writes `.zeabur/context.json` to remember the target project / service — it contains personal IDs, so don't commit it.
 
-Once the service is up, open `https://<your-domain>/admin` to log in.
+Once the service is up, open `https://<your-domain>/kiro_admin` to log in.
 
 Config is auto-created at `data/config.json`. Mount `/app/data` for persistence. The default admin password is `changeme` — override it via the `ADMIN_PASSWORD` env var or change it in the admin panel before going to production.
 
 ## Usage
 
-Open `http://localhost:8080/admin`, log in, add accounts, then call the API:
+Open `http://localhost:8080/kiro_admin`, log in, add accounts, then call the API:
 
 ```bash
 # Claude

@@ -10,7 +10,7 @@
 // The service exposes the following endpoints:
 //   - /v1/messages - Claude API compatible endpoint
 //   - /v1/chat/completions - OpenAI API compatible endpoint
-//   - /admin - Web-based administration panel
+//   - /kiro_admin - Web-based administration panel
 package main
 
 import (
@@ -60,7 +60,7 @@ func main() {
 	// 启动服务器
 	addr := fmt.Sprintf("%s:%d", config.GetHost(), config.GetPort())
 	logger.Infof("Kiro-Go starting on http://%s (log level: %s)", addr, logger.LevelName(logger.GetLevel()))
-	logger.Infof("Admin panel: http://%s/admin", addr)
+	logger.Infof("Admin panel: http://%s/kiro_admin", addr)
 	logger.Infof("Claude API: http://%s/v1/messages", addr)
 	logger.Infof("OpenAI API: http://%s/v1/chat/completions", addr)
 

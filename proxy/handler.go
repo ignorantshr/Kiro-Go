@@ -387,11 +387,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"status":"ok"}`))
 
 	// 管理端点
-	case path == "/admin" || path == "/admin/":
+	case path == "/kiro_admin" || path == "/kiro_admin/":
 		h.serveAdminPage(w, r)
-	case strings.HasPrefix(path, "/admin/api/"):
+	case strings.HasPrefix(path, "/kiro_admin/api/"):
 		h.handleAdminAPI(w, r)
-	case strings.HasPrefix(path, "/admin/"):
+	case strings.HasPrefix(path, "/kiro_admin/"):
 		h.serveStaticFile(w, r)
 
 	// 健康检查
@@ -620,7 +620,7 @@ func (h *Handler) fetchAndCacheAccountModels(account *config.Account) error {
 	return nil
 }
 
-// apiRefreshAccountModels POST /admin/api/accounts/{id}/models/refresh
+// apiRefreshAccountModels POST /kiro_admin/api/accounts/{id}/models/refresh
 // 立即为指定账号拉取并更新模型路由缓存。
 func (h *Handler) apiRefreshAccountModels(w http.ResponseWriter, r *http.Request, id string) {
 	accounts := config.GetAccounts()
@@ -654,7 +654,7 @@ func (h *Handler) apiRefreshAccountModels(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// apiRefreshAllAccountsModels POST /admin/api/accounts/models/refresh
+// apiRefreshAllAccountsModels POST /kiro_admin/api/accounts/models/refresh
 // 直接复用 refreshModelsCache，为所有已启用账号刷新模型路由缓存。
 func (h *Handler) apiRefreshAllAccountsModels(w http.ResponseWriter, r *http.Request) {
 	h.refreshModelsCache()
@@ -2069,7 +2069,7 @@ func (h *Handler) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path := strings.TrimPrefix(r.URL.Path, "/admin/api")
+	path := strings.TrimPrefix(r.URL.Path, "/kiro_admin/api")
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 
 	switch {
@@ -3327,7 +3327,7 @@ func (h *Handler) serveAdminPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) serveStaticFile(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/admin/")
+	path := strings.TrimPrefix(r.URL.Path, "/kiro_admin/")
 	http.ServeFile(w, r, "web/"+path)
 }
 

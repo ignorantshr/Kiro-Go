@@ -74,13 +74,13 @@ zeabur deploy
 
 > 命令需在项目根目录执行。CLI 会生成 `.zeabur/context.json` 记录目标 project / service，包含个人 ID，请勿提交。
 
-部署完成后访问 `https://<你的域名>/admin` 登录管理面板。
+部署完成后访问 `https://<你的域名>/kiro_admin` 登录管理面板。
 
 首次运行会在 `data/config.json` 自动生成配置，挂载 `/app/data` 以持久化。默认管理密码为 `changeme`，生产环境请务必通过 `ADMIN_PASSWORD` 环境变量或在管理面板中修改。
 
 ## 使用方法
 
-访问 `http://localhost:8080/admin` 登录、添加账号，然后调用 API：
+访问 `http://localhost:8080/kiro_admin` 登录、添加账号，然后调用 API：
 
 ```bash
 # Claude
