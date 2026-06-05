@@ -92,22 +92,31 @@ func (h *Handler) authenticate(r *http.Request) (*config.ApiKeyEntry, error) {
 }
 
 // withApiKeyContext attaches the matched entry to the request context so downstream
-// handlers (recordSuccess, etc.) can credit usage against the correct key.
+// handlers can read binding info and credit usage against the correct key.
 func withApiKeyContext(r *http.Request, entry *config.ApiKeyEntry) *http.Request {
 	if entry == nil {
 		return r
 	}
-	ctx := context.WithValue(r.Context(), apiKeyContextKey{}, entry.ID)
+	ctx := context.WithValue(r.Context(), apiKeyContextKey{}, entry)
 	return r.WithContext(ctx)
+}
+
+// apiKeyEntryFromContext returns the full matched API key entry stored in ctx, or nil.
+func apiKeyEntryFromContext(ctx context.Context) *config.ApiKeyEntry {
+	if ctx == nil {
+		return nil
+	}
+	if v, ok := ctx.Value(apiKeyContextKey{}).(*config.ApiKeyEntry); ok {
+		return v
+	}
+	return nil
 }
 
 // apiKeyIDFromContext returns the matched API key ID stored in ctx, or empty string.
 func apiKeyIDFromContext(ctx context.Context) string {
-	if ctx == nil {
-		return ""
-	}
-	if v, ok := ctx.Value(apiKeyContextKey{}).(string); ok {
-		return v
+	entry := apiKeyEntryFromContext(ctx)
+	if entry != nil {
+		return entry.ID
 	}
 	return ""
 }

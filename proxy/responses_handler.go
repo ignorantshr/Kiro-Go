@@ -110,29 +110,33 @@ func (h *Handler) handleOpenAIResponses(w http.ResponseWriter, r *http.Request) 
 	estimatedInputTokens := estimateOpenAIRequestInputTokens(openaiReq)
 	kiroPayload := OpenAIToKiro(openaiReq, thinking)
 
-	apiKeyID := apiKeyIDFromContext(r.Context())
+	apiKeyEntry := apiKeyEntryFromContext(r.Context())
 	respID := generateResponseID()
 
 	if req.Stream {
 		h.handleResponsesStream(w, kiroPayload, actualModel, thinking, estimatedInputTokens,
-			apiKeyID, respID, &req, storedInputCopy, storeResponse)
+			apiKeyEntry, respID, &req, storedInputCopy, storeResponse)
 		return
 	}
 
 	h.handleResponsesNonStream(w, kiroPayload, actualModel, thinking, estimatedInputTokens,
-		apiKeyID, respID, &req, storedInputCopy, storeResponse)
+		apiKeyEntry, respID, &req, storedInputCopy, storeResponse)
 }
 
 func (h *Handler) handleResponsesNonStream(
 	w http.ResponseWriter, payload *KiroPayload, model string, thinking bool,
-	estimatedInputTokens int, apiKeyID, respID string,
+	estimatedInputTokens int, apiKeyEntry *config.ApiKeyEntry, respID string,
 	req *ResponsesRequest, storedInput json.RawMessage, storeResponse bool,
 ) {
+	apiKeyID := ""
+	if apiKeyEntry != nil {
+		apiKeyID = apiKeyEntry.ID
+	}
 	excluded := make(map[string]bool)
 	var lastErr error
 
 	for attempt := 0; attempt < maxAccountRetryAttempts; attempt++ {
-		account := h.pool.GetNextForModelExcluding(model, excluded)
+		account := h.selectAccountForRequest(model, excluded, apiKeyEntry)
 		if account == nil {
 			break
 		}
@@ -271,9 +275,13 @@ func buildResponsesObject(
 
 func (h *Handler) handleResponsesStream(
 	w http.ResponseWriter, payload *KiroPayload, model string, thinking bool,
-	estimatedInputTokens int, apiKeyID, respID string,
+	estimatedInputTokens int, apiKeyEntry *config.ApiKeyEntry, respID string,
 	req *ResponsesRequest, storedInput json.RawMessage, storeResponse bool,
 ) {
+	apiKeyID := ""
+	if apiKeyEntry != nil {
+		apiKeyID = apiKeyEntry.ID
+	}
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -315,7 +323,7 @@ func (h *Handler) handleResponsesStream(
 	responseStarted := false
 
 	for attempt := 0; attempt < maxAccountRetryAttempts; attempt++ {
-		account := h.pool.GetNextForModelExcluding(model, excluded)
+		account := h.selectAccountForRequest(model, excluded, apiKeyEntry)
 		if account == nil {
 			break
 		}

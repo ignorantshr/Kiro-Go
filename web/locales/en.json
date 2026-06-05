@@ -435,5 +435,12 @@
   "apiKeys.closeBtn": "Close",
   "apiKeys.saveBtn": "Save",
   "apiKeys.cancelBtn": "Cancel",
-  "apiKeys.loadFailed": "Failed to load API keys"
+  "apiKeys.loadFailed": "Failed to load API keys",
+  "apiKeys.boundAccounts": "Bound Accounts",
+  "apiKeys.boundAccountsHint": "Select accounts for affinity routing. Leave empty for global routing.",
+  "apiKeys.strictBinding": "Strict Binding",
+  "apiKeys.strictBindingHint": "When enabled, requests fail if no bound account is available (no global fallback).",
+  "apiKeys.globalRouting": "Global routing",
+  "apiKeys.boundToN": "Bound to {n} accounts",
+  "apiKeys.strict": "strict"
 }

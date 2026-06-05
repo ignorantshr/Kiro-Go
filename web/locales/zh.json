@@ -435,5 +435,12 @@
   "apiKeys.closeBtn": "关闭",
   "apiKeys.saveBtn": "保存",
   "apiKeys.cancelBtn": "取消",
-  "apiKeys.loadFailed": "加载 API Key 列表失败"
+  "apiKeys.loadFailed": "加载 API Key 列表失败",
+  "apiKeys.boundAccounts": "绑定账号",
+  "apiKeys.boundAccountsHint": "选择亲和路由的账号，留空则使用全局路由。",
+  "apiKeys.strictBinding": "严格绑定",
+  "apiKeys.strictBindingHint": "开启后，若绑定账号均不可用则请求直接失败（不回退到全局池）。",
+  "apiKeys.globalRouting": "全局路由",
+  "apiKeys.boundToN": "绑定 {n} 个账号",
+  "apiKeys.strict": "严格"
 }

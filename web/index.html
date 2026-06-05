@@ -609,6 +609,18 @@
           <input type="number" id="apiKeyForm_creditLimit" min="0" step="0.01" value="0" />
           <small data-i18n="apiKeys.limitHint"></small>
         </div>
+        <div class="form-group">
+          <label data-i18n="apiKeys.boundAccounts"></label>
+          <select id="apiKeyForm_boundAccounts" multiple style="width:100%;min-height:80px;"></select>
+          <small data-i18n="apiKeys.boundAccountsHint"></small>
+        </div>
+        <div class="form-group">
+          <label class="flex items-center gap-2">
+            <span class="switch"><input type="checkbox" id="apiKeyForm_strictBinding" /><span class="slider"></span></span>
+            <span data-i18n="apiKeys.strictBinding"></span>
+          </label>
+          <small data-i18n="apiKeys.strictBindingHint"></small>
+        </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" id="apiKeyModalCancelBtn" type="button" data-i18n="apiKeys.cancelBtn"></button>
           <button class="btn btn-primary" id="apiKeyModalSaveBtn" type="button" data-i18n="apiKeys.saveBtn"></button>

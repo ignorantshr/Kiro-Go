@@ -680,6 +680,7 @@
   async function loadAccounts() {
     const res = await api('/accounts');
     accountsData = await res.json();
+    window._accountsCache = accountsData;
     renderAccounts();
   }
 
@@ -1622,6 +1623,10 @@
       const disabled = !item.enabled
         ? '<span class="text-xs" style="background:rgba(239,68,68,0.15);color:#ef4444;padding:1px 6px;border-radius:4px;">' + escapeHtml(t('apiKeys.disabled')) + '</span>'
         : '';
+      const boundCount = (item.boundAccountIds && item.boundAccountIds.length) || 0;
+      const bindingBadge = boundCount > 0
+        ? '<span class="text-xs" style="background:rgba(16,185,129,0.15);color:#10b981;padding:1px 6px;border-radius:4px;">' + escapeHtml(t('apiKeys.boundToN').replace('{n}', String(boundCount))) + (item.strictBinding ? ' (' + escapeHtml(t('apiKeys.strict')) + ')' : '') + '</span>'
+        : '<span class="text-xs muted-text" style="padding:1px 6px;">' + escapeHtml(t('apiKeys.globalRouting')) + '</span>';
       const tokensLine = usageLine(t('apiKeys.tokens'), item.tokensUsed || 0, item.tokenLimit || 0);
       const creditsLine = usageLine(t('apiKeys.credits'), item.creditsUsed || 0, item.creditLimit || 0);
       const requestsLine = '<div class="text-xs muted-text">' + escapeHtml(t('apiKeys.requests')) + ': ' + escapeHtml(formatNumber(item.requestsCount || 0)) + '</div>';
@@ -1631,6 +1636,7 @@
             '<span class="font-semibold">' + name + '</span>' +
             migrated +
             disabled +
+            bindingBadge +
             '<span class="text-xs muted-text font-mono">' + masked + '</span>' +
           '</div>' +
           '<div class="flex items-center gap-2">' +
@@ -1669,6 +1675,21 @@
     $('apiKeyForm_enabled').checked = entry ? !!entry.enabled : true;
     $('apiKeyForm_tokenLimit').value = entry ? String(entry.tokenLimit || 0) : '0';
     $('apiKeyForm_creditLimit').value = entry ? String(entry.creditLimit || 0) : '0';
+
+    // Populate bound accounts multi-select
+    const selectEl = $('apiKeyForm_boundAccounts');
+    selectEl.innerHTML = '';
+    const accounts = window._accountsCache || [];
+    const boundIds = (entry && entry.boundAccountIds) || [];
+    accounts.forEach(function(acc) {
+      const opt = document.createElement('option');
+      opt.value = acc.id;
+      opt.textContent = acc.nickname || acc.email || acc.id;
+      if (boundIds.indexOf(acc.id) >= 0) opt.selected = true;
+      selectEl.appendChild(opt);
+    });
+    $('apiKeyForm_strictBinding').checked = entry ? !!entry.strictBinding : false;
+
     apiKeyModalSubmitting = false;
     $('apiKeyModalSaveBtn').disabled = false;
     openDialog('apiKeyModal');
@@ -1691,11 +1712,16 @@
       const enabled = $('apiKeyForm_enabled').checked;
       const tokenLimit = parseInt($('apiKeyForm_tokenLimit').value, 10);
       const creditLimit = parseFloat($('apiKeyForm_creditLimit').value);
+      const selectEl = $('apiKeyForm_boundAccounts');
+      const boundAccountIds = Array.from(selectEl.selectedOptions).map(function(o) { return o.value; });
+      const strictBinding = $('apiKeyForm_strictBinding').checked && boundAccountIds.length > 0;
       const payload = {
         name: name,
         enabled: enabled,
         tokenLimit: isNaN(tokenLimit) || tokenLimit < 0 ? 0 : tokenLimit,
-        creditLimit: isNaN(creditLimit) || creditLimit < 0 ? 0 : creditLimit
+        creditLimit: isNaN(creditLimit) || creditLimit < 0 ? 0 : creditLimit,
+        boundAccountIds: boundAccountIds,
+        strictBinding: strictBinding
       };
       let res, d;
       if (apiKeyEditingId) {

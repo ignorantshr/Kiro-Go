@@ -325,3 +325,106 @@ func TestReloadDropsOverQuotaAccountWhenAllowOverUsageDisabled(t *testing.T) {
 		t.Fatalf("expected over-quota account to be dropped, got %q", got.ID)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// GetNextWithinExcluding / GetNextForModelWithinExcluding
+// ---------------------------------------------------------------------------
+
+func TestGetNextWithinExcludingOnlyReturnsAllowed(t *testing.T) {
+	p := newTestPool(
+		config.Account{ID: "a"},
+		config.Account{ID: "b"},
+		config.Account{ID: "c"},
+	)
+	allowed := map[string]bool{"b": true, "c": true}
+	for i := 0; i < 10; i++ {
+		acc := p.GetNextWithinExcluding(allowed, nil, false)
+		if acc == nil {
+			t.Fatal("expected an account")
+		}
+		if acc.ID == "a" {
+			t.Fatalf("account 'a' is not in allowed set but was returned")
+		}
+	}
+}
+
+func TestGetNextWithinExcludingEmptyAllowedReturnsNil(t *testing.T) {
+	p := newTestPool(config.Account{ID: "a"})
+	acc := p.GetNextWithinExcluding(map[string]bool{}, nil, false)
+	if acc != nil {
+		t.Fatalf("expected nil for empty allowedIDs, got %q", acc.ID)
+	}
+}
+
+func TestGetNextForModelWithinExcludingRespectsModelFilter(t *testing.T) {
+	p := newTestPool(
+		config.Account{ID: "a"},
+		config.Account{ID: "b"},
+	)
+	p.SetModelList("a", []string{"claude-sonnet-4.5"})
+	p.SetModelList("b", []string{"claude-opus-4.5"})
+
+	allowed := map[string]bool{"a": true, "b": true}
+	acc := p.GetNextForModelWithinExcluding("claude-opus-4.5", allowed, nil, false)
+	if acc == nil || acc.ID != "b" {
+		t.Fatalf("expected account b (supports opus), got %v", acc)
+	}
+}
+
+func TestGetNextWithinExcludingStrictSkipsCooldownFallback(t *testing.T) {
+	p := newTestPool(config.Account{ID: "a"})
+	// Cool down the only allowed account
+	p.RecordError("a", true) // 1h cooldown
+
+	allowed := map[string]bool{"a": true}
+	// Non-strict: should return the cooling-down account as fallback
+	acc := p.GetNextWithinExcluding(allowed, nil, false)
+	if acc == nil {
+		t.Fatal("non-strict should fallback to cooling-down account")
+	}
+
+	// Strict: should return nil
+	acc = p.GetNextWithinExcluding(allowed, nil, true)
+	if acc != nil {
+		t.Fatalf("strict should return nil when all accounts cooling down, got %q", acc.ID)
+	}
+}
+
+func TestGetNextWithinExcludingRespectsExcluded(t *testing.T) {
+	p := newTestPool(
+		config.Account{ID: "a"},
+		config.Account{ID: "b"},
+	)
+	allowed := map[string]bool{"a": true, "b": true}
+	excluded := map[string]bool{"a": true}
+	for i := 0; i < 5; i++ {
+		acc := p.GetNextWithinExcluding(allowed, excluded, false)
+		if acc == nil {
+			t.Fatal("expected account b")
+		}
+		if acc.ID == "a" {
+			t.Fatal("excluded account was returned")
+		}
+	}
+}
+
+func TestGetNextWithinExcludingPreservesWeighting(t *testing.T) {
+	// Account "a" has weight 3, "b" has weight 1
+	p := newTestPool(
+		config.Account{ID: "a"},
+		config.Account{ID: "a"},
+		config.Account{ID: "a"},
+		config.Account{ID: "b"},
+	)
+	allowed := map[string]bool{"a": true, "b": true}
+	counts := map[string]int{}
+	for i := 0; i < 100; i++ {
+		acc := p.GetNextWithinExcluding(allowed, nil, false)
+		if acc != nil {
+			counts[acc.ID]++
+		}
+	}
+	if counts["a"] < counts["b"] {
+		t.Fatalf("expected weighted preference for 'a', got a=%d b=%d", counts["a"], counts["b"])
+	}
+}

@@ -8,6 +8,17 @@ import (
 	"time"
 )
 
+// cloneApiKeyEntry returns a deep copy of the entry, duplicating the
+// BoundAccountIDs slice so the caller cannot mutate the global config.
+func cloneApiKeyEntry(e ApiKeyEntry) ApiKeyEntry {
+	if len(e.BoundAccountIDs) > 0 {
+		cp := make([]string, len(e.BoundAccountIDs))
+		copy(cp, e.BoundAccountIDs)
+		e.BoundAccountIDs = cp
+	}
+	return e
+}
+
 // ListApiKeys returns a snapshot of all configured API key entries.
 func ListApiKeys() []ApiKeyEntry {
 	cfgLock.RLock()
@@ -16,11 +27,13 @@ func ListApiKeys() []ApiKeyEntry {
 		return nil
 	}
 	out := make([]ApiKeyEntry, len(cfg.ApiKeys))
-	copy(out, cfg.ApiKeys)
+	for i := range cfg.ApiKeys {
+		out[i] = cloneApiKeyEntry(cfg.ApiKeys[i])
+	}
 	return out
 }
 
-// GetApiKeyEntry returns a copy of the entry with the given ID, or nil if not found.
+// GetApiKeyEntry returns a deep copy of the entry with the given ID, or nil if not found.
 func GetApiKeyEntry(id string) *ApiKeyEntry {
 	cfgLock.RLock()
 	defer cfgLock.RUnlock()
@@ -29,11 +42,49 @@ func GetApiKeyEntry(id string) *ApiKeyEntry {
 	}
 	for i := range cfg.ApiKeys {
 		if cfg.ApiKeys[i].ID == id {
-			cp := cfg.ApiKeys[i]
+			cp := cloneApiKeyEntry(cfg.ApiKeys[i])
 			return &cp
 		}
 	}
 	return nil
+}
+
+// normalizeBindingLocked validates and deduplicates BoundAccountIDs against cfg.Accounts.
+// Must be called with cfgLock already held.
+func normalizeBindingLocked(boundIDs []string, strict bool) ([]string, bool, error) {
+	if len(boundIDs) == 0 {
+		if strict {
+			return nil, false, errors.New("strictBinding requires at least one bound account")
+		}
+		return nil, false, nil
+	}
+	accountExists := make(map[string]bool, len(cfg.Accounts))
+	for i := range cfg.Accounts {
+		accountExists[cfg.Accounts[i].ID] = true
+	}
+	seen := make(map[string]bool, len(boundIDs))
+	var result []string
+	for _, id := range boundIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if seen[id] {
+			continue
+		}
+		if !accountExists[id] {
+			return nil, false, errors.New("bound account not found: " + id)
+		}
+		seen[id] = true
+		result = append(result, id)
+	}
+	if len(result) == 0 {
+		if strict {
+			return nil, false, errors.New("strictBinding requires at least one bound account")
+		}
+		return nil, false, nil
+	}
+	return result, strict, nil
 }
 
 // AddApiKey appends a new API key entry. Generates ID and CreatedAt if missing,
@@ -53,6 +104,12 @@ func AddApiKey(entry ApiKeyEntry) (ApiKeyEntry, error) {
 			return ApiKeyEntry{}, errors.New("api key already exists")
 		}
 	}
+	normalized, strict, err := normalizeBindingLocked(entry.BoundAccountIDs, entry.StrictBinding)
+	if err != nil {
+		return ApiKeyEntry{}, err
+	}
+	entry.BoundAccountIDs = normalized
+	entry.StrictBinding = strict
 	if entry.ID == "" {
 		entry.ID = newUUID()
 	}
@@ -68,13 +125,32 @@ func AddApiKey(entry ApiKeyEntry) (ApiKeyEntry, error) {
 	return entry, nil
 }
 
-// UpdateApiKey applies a patch to an existing API key. Patch semantics:
+// ApiKeyBindingPatch holds optional binding-field overrides for UpdateApiKeyFull.
+// nil pointers mean "keep existing value".
+type ApiKeyBindingPatch struct {
+	BoundAccountIDs *[]string // nil = keep; non-nil = overwrite (empty slice = clear)
+	StrictBinding   *bool     // nil = keep; non-nil = overwrite
+}
+
+// UpdateApiKey applies a patch to an existing API key (without binding changes).
+// Delegates to UpdateApiKeyFull with nil binding patch.
+func UpdateApiKey(id string, patch ApiKeyEntry) error {
+	return UpdateApiKeyFull(id, patch, nil)
+}
+
+// UpdateApiKeyFull applies a patch to an existing API key atomically (single save).
+// Patch semantics for scalar fields:
 //   - Name, Key are overwritten when non-empty in patch.
 //   - Enabled, TokenLimit, CreditLimit are always overwritten (zero values are valid).
-//   - Counters (TokensUsed/CreditsUsed/RequestsCount) are not touched here; use
-//     RecordApiKeyUsage or ResetApiKeyUsage instead.
+//   - Counters are not touched here.
 //   - Migrated stays as-is once true; only flips when explicitly set in patch.
-func UpdateApiKey(id string, patch ApiKeyEntry) error {
+//
+// Binding patch (when non-nil):
+//   - BoundAccountIDs: nil=keep, non-nil=overwrite (empty=clear)
+//   - StrictBinding: nil=keep, non-nil=overwrite
+//   - Clearing BoundAccountIDs forces StrictBinding=false
+//   - Explicitly setting BoundAccountIDs=[] + StrictBinding=true returns error
+func UpdateApiKeyFull(id string, patch ApiKeyEntry, binding *ApiKeyBindingPatch) error {
 	cfgLock.Lock()
 	defer cfgLock.Unlock()
 	if cfg == nil {
@@ -95,7 +171,6 @@ func UpdateApiKey(id string, patch ApiKeyEntry) error {
 	}
 	if patch.Key != "" {
 		newKey := strings.TrimSpace(patch.Key)
-		// Reject duplicates against any other entry.
 		for j := range cfg.ApiKeys {
 			if j != idx && cfg.ApiKeys[j].Key == newKey {
 				return errors.New("api key value collides with existing entry")
@@ -109,6 +184,31 @@ func UpdateApiKey(id string, patch ApiKeyEntry) error {
 	if patch.Migrated {
 		cfg.ApiKeys[idx].Migrated = true
 	}
+
+	if binding != nil {
+		boundIDs := cfg.ApiKeys[idx].BoundAccountIDs
+		strict := cfg.ApiKeys[idx].StrictBinding
+		boundIDsExplicit := binding.BoundAccountIDs != nil
+		strictExplicit := binding.StrictBinding != nil
+		if boundIDsExplicit {
+			boundIDs = *binding.BoundAccountIDs
+		}
+		if strictExplicit {
+			strict = *binding.StrictBinding
+		}
+		// If clearing binding explicitly and strict was not explicitly set in this request,
+		// force strict=false (per spec: clearing binding auto-clears strict).
+		if boundIDsExplicit && len(boundIDs) == 0 && !strictExplicit {
+			strict = false
+		}
+		normalized, finalStrict, err := normalizeBindingLocked(boundIDs, strict)
+		if err != nil {
+			return err
+		}
+		cfg.ApiKeys[idx].BoundAccountIDs = normalized
+		cfg.ApiKeys[idx].StrictBinding = finalStrict
+	}
+
 	return saveLocked()
 }
 
@@ -129,7 +229,7 @@ func DeleteApiKey(id string) error {
 	return nil
 }
 
-// FindApiKeyByValue returns a copy of the entry whose Key matches the given value,
+// FindApiKeyByValue returns a deep copy of the entry whose Key matches the given value,
 // or nil if no match. O(n) linear scan.
 func FindApiKeyByValue(key string) *ApiKeyEntry {
 	cfgLock.RLock()
@@ -139,7 +239,7 @@ func FindApiKeyByValue(key string) *ApiKeyEntry {
 	}
 	for i := range cfg.ApiKeys {
 		if cfg.ApiKeys[i].Key == key {
-			cp := cfg.ApiKeys[i]
+			cp := cloneApiKeyEntry(cfg.ApiKeys[i])
 			return &cp
 		}
 	}

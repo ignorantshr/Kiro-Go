@@ -137,6 +137,10 @@ type ApiKeyEntry struct {
 	TokenLimit  int64   `json:"tokenLimit,omitempty"`
 	CreditLimit float64 `json:"creditLimit,omitempty"`
 
+	// Account affinity binding
+	BoundAccountIDs []string `json:"boundAccountIds,omitempty"`
+	StrictBinding   bool     `json:"strictBinding,omitempty"`
+
 	// Cumulative usage (never auto-reset)
 	TokensUsed    int64   `json:"tokensUsed,omitempty"`
 	CreditsUsed   float64 `json:"creditsUsed,omitempty"`
@@ -514,13 +518,35 @@ func UpdateAccountProfileArn(id, profileArn string) error {
 func DeleteAccount(id string) error {
 	cfgLock.Lock()
 	defer cfgLock.Unlock()
+	found := false
 	for i, a := range cfg.Accounts {
 		if a.ID == id {
 			cfg.Accounts = append(cfg.Accounts[:i], cfg.Accounts[i+1:]...)
-			return Save()
+			found = true
+			break
 		}
 	}
-	return nil
+	if !found {
+		return nil
+	}
+	// Scrub deleted account from all API key bindings.
+	for i := range cfg.ApiKeys {
+		ids := cfg.ApiKeys[i].BoundAccountIDs
+		if len(ids) == 0 {
+			continue
+		}
+		filtered := ids[:0]
+		for _, bound := range ids {
+			if bound != id {
+				filtered = append(filtered, bound)
+			}
+		}
+		cfg.ApiKeys[i].BoundAccountIDs = filtered
+		if len(filtered) == 0 {
+			cfg.ApiKeys[i].StrictBinding = false
+		}
+	}
+	return Save()
 }
 
 func UpdateAccountToken(id, accessToken, refreshToken string, expiresAt int64) error {

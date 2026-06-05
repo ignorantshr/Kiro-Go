@@ -65,17 +65,23 @@ func (p *AccountPool) Reload() {
 	p.totalAccounts = len(enabled)
 }
 
-// GetNext 获取下一个可用账号（加权轮询）
-func (p *AccountPool) GetNext() *config.Account {
-	return p.GetNextExcluding(nil)
+// selectOpts controls the shared account selection logic.
+type selectOpts struct {
+	allowedIDs map[string]bool // nil = no filter; non-nil empty = return nil immediately
+	model      string          // "" = no model filter
+	excluded   map[string]bool
+	strict     bool // true = skip cooldown fallback, return nil if nothing immediately available
 }
 
-// GetNextExcluding 获取下一个可用账号（加权轮询），并跳过指定账号。
-func (p *AccountPool) GetNextExcluding(excluded map[string]bool) *config.Account {
+// selectAccount is the shared implementation for all account selection methods.
+func (p *AccountPool) selectAccount(opts selectOpts) *config.Account {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
 	if len(p.accounts) == 0 {
+		return nil
+	}
+	if opts.allowedIDs != nil && len(opts.allowedIDs) == 0 {
 		return nil
 	}
 
@@ -84,46 +90,55 @@ func (p *AccountPool) GetNextExcluding(excluded map[string]bool) *config.Account
 	n := len(p.accounts)
 	seen := make(map[string]bool)
 
-	// 加权轮询查找可用账号
 	for i := 0; i < n; i++ {
 		idx := atomic.AddUint64(&p.currentIndex, 1) % uint64(n)
 		acc := &p.accounts[idx]
 
-		if excluded != nil && excluded[acc.ID] {
+		if opts.excluded != nil && opts.excluded[acc.ID] {
 			seen[acc.ID] = true
 			continue
 		}
 		if seen[acc.ID] {
 			continue
 		}
-
-		// 跳过冷却中的账号
+		if opts.allowedIDs != nil && !opts.allowedIDs[acc.ID] {
+			seen[acc.ID] = true
+			continue
+		}
+		if opts.model != "" && !p.accountHasModel(acc.ID, opts.model) {
+			seen[acc.ID] = true
+			continue
+		}
 		if cooldown, ok := p.cooldowns[acc.ID]; ok && now.Before(cooldown) {
 			seen[acc.ID] = true
 			continue
 		}
-
-		// 跳过即将过期的 Token
 		if acc.ExpiresAt > 0 && time.Now().Unix() > acc.ExpiresAt-tokenRefreshSkewSeconds {
 			seen[acc.ID] = true
 			continue
 		}
-
-		// Skip accounts whose quota is exhausted, unless overrides apply.
 		if isQuotaBlocked(*acc, allowOverUsage) {
 			seen[acc.ID] = true
 			continue
 		}
-
 		return acc
 	}
 
-		// 无可用账号，返回冷却时间最短的（排除额度用尽的，除非允许超额）
+	if opts.strict {
+		return nil
+	}
+
 	var best *config.Account
 	var earliest time.Time
 	for i := range p.accounts {
 		acc := &p.accounts[i]
-		if excluded != nil && excluded[acc.ID] {
+		if opts.excluded != nil && opts.excluded[acc.ID] {
+			continue
+		}
+		if opts.allowedIDs != nil && !opts.allowedIDs[acc.ID] {
+			continue
+		}
+		if opts.model != "" && !p.accountHasModel(acc.ID, opts.model) {
 			continue
 		}
 		if isQuotaBlocked(*acc, allowOverUsage) {
@@ -139,6 +154,16 @@ func (p *AccountPool) GetNextExcluding(excluded map[string]bool) *config.Account
 		}
 	}
 	return best
+}
+
+// GetNext 获取下一个可用账号（加权轮询）
+func (p *AccountPool) GetNext() *config.Account {
+	return p.GetNextExcluding(nil)
+}
+
+// GetNextExcluding 获取下一个可用账号（加权轮询），并跳过指定账号。
+func (p *AccountPool) GetNextExcluding(excluded map[string]bool) *config.Account {
+	return p.selectAccount(selectOpts{excluded: excluded})
 }
 
 // SetModelList 缓存账号支持的模型集合（由 handler 在刷新后调用）
@@ -187,72 +212,19 @@ func (p *AccountPool) GetNextForModel(model string) *config.Account {
 
 // GetNextForModelExcluding 获取下一个支持指定模型的可用账号，并跳过指定账号。
 func (p *AccountPool) GetNextForModelExcluding(model string, excluded map[string]bool) *config.Account {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
+	return p.selectAccount(selectOpts{model: model, excluded: excluded})
+}
 
-	if len(p.accounts) == 0 {
-		return nil
-	}
+// GetNextWithinExcluding selects the next account from the allowedIDs set, skipping excluded.
+// When strict=true and no account is immediately available, returns nil (no cooldown fallback).
+func (p *AccountPool) GetNextWithinExcluding(allowedIDs map[string]bool, excluded map[string]bool, strict bool) *config.Account {
+	return p.selectAccount(selectOpts{allowedIDs: allowedIDs, excluded: excluded, strict: strict})
+}
 
-	allowOverUsage := config.GetAllowOverUsage()
-	now := time.Now()
-	n := len(p.accounts)
-	seen := make(map[string]bool)
-
-	for i := 0; i < n; i++ {
-		idx := atomic.AddUint64(&p.currentIndex, 1) % uint64(n)
-		acc := &p.accounts[idx]
-
-		if excluded != nil && excluded[acc.ID] {
-			seen[acc.ID] = true
-			continue
-		}
-		if seen[acc.ID] {
-			continue
-		}
-		if !p.accountHasModel(acc.ID, model) {
-			seen[acc.ID] = true
-			continue
-		}
-		if cooldown, ok := p.cooldowns[acc.ID]; ok && now.Before(cooldown) {
-			seen[acc.ID] = true
-			continue
-		}
-		if acc.ExpiresAt > 0 && time.Now().Unix() > acc.ExpiresAt-tokenRefreshSkewSeconds {
-			seen[acc.ID] = true
-			continue
-		}
-		if isQuotaBlocked(*acc, allowOverUsage) {
-			seen[acc.ID] = true
-			continue
-		}
-		return acc
-	}
-
-	// fallback：找冷却时间最短且支持该模型的账号
-	var best *config.Account
-	var earliest time.Time
-	for i := range p.accounts {
-		acc := &p.accounts[i]
-		if excluded != nil && excluded[acc.ID] {
-			continue
-		}
-		if !p.accountHasModel(acc.ID, model) {
-			continue
-		}
-		if isQuotaBlocked(*acc, allowOverUsage) {
-			continue
-		}
-		if cooldown, ok := p.cooldowns[acc.ID]; ok {
-			if best == nil || cooldown.Before(earliest) {
-				best = acc
-				earliest = cooldown
-			}
-		} else {
-			return acc
-		}
-	}
-	return best
+// GetNextForModelWithinExcluding selects the next account supporting model from the
+// allowedIDs set, skipping excluded. When strict=true, no cooldown fallback.
+func (p *AccountPool) GetNextForModelWithinExcluding(model string, allowedIDs map[string]bool, excluded map[string]bool, strict bool) *config.Account {
+	return p.selectAccount(selectOpts{allowedIDs: allowedIDs, model: model, excluded: excluded, strict: strict})
 }
 
 // GetByID 根据 ID 获取账号

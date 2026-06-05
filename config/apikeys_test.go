@@ -244,10 +244,10 @@ func TestResetApiKeyUsage(t *testing.T) {
 
 func TestApiKeyOverLimit(t *testing.T) {
 	tests := []struct {
-		name        string
-		entry       ApiKeyEntry
-		wantToken   bool
-		wantCredit  bool
+		name       string
+		entry      ApiKeyEntry
+		wantToken  bool
+		wantCredit bool
 	}{
 		{"unlimited", ApiKeyEntry{TokensUsed: 100, CreditsUsed: 5}, false, false},
 		{"under token limit", ApiKeyEntry{TokenLimit: 200, TokensUsed: 100}, false, false},
@@ -291,5 +291,301 @@ func TestGenerateApiKeyValueIsUnique(t *testing.T) {
 	}
 	if len(a) < 10 {
 		t.Fatalf("expected non-trivial key length, got %q", a)
+	}
+}
+
+func TestAddApiKeyWithBoundAccounts(t *testing.T) {
+	cfgFile := filepath.Join(t.TempDir(), "config.json")
+	if err := Init(cfgFile); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if err := AddAccount(Account{ID: "acc-1", Enabled: true}); err != nil {
+		t.Fatalf("add account: %v", err)
+	}
+	if err := AddAccount(Account{ID: "acc-2", Enabled: true}); err != nil {
+		t.Fatalf("add account: %v", err)
+	}
+
+	entry, err := AddApiKey(ApiKeyEntry{
+		Name:            "bound",
+		Key:             "sk-bound",
+		Enabled:         true,
+		BoundAccountIDs: []string{"acc-1", "acc-2"},
+		StrictBinding:   true,
+	})
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if len(entry.BoundAccountIDs) != 2 {
+		t.Fatalf("expected 2 bound accounts, got %d", len(entry.BoundAccountIDs))
+	}
+	if !entry.StrictBinding {
+		t.Fatalf("expected strict binding")
+	}
+}
+
+func TestAddApiKeyBoundAccountNotFound(t *testing.T) {
+	cfgFile := filepath.Join(t.TempDir(), "config.json")
+	if err := Init(cfgFile); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	_, err := AddApiKey(ApiKeyEntry{
+		Name:            "bad",
+		Key:             "sk-bad",
+		Enabled:         true,
+		BoundAccountIDs: []string{"nonexistent"},
+	})
+	if err == nil {
+		t.Fatalf("expected error for nonexistent bound account")
+	}
+}
+
+func TestAddApiKeyDeduplicatesBoundAccounts(t *testing.T) {
+	cfgFile := filepath.Join(t.TempDir(), "config.json")
+	if err := Init(cfgFile); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if err := AddAccount(Account{ID: "acc-1", Enabled: true}); err != nil {
+		t.Fatalf("add account: %v", err)
+	}
+	entry, err := AddApiKey(ApiKeyEntry{
+		Name:            "dedup",
+		Key:             "sk-dedup",
+		Enabled:         true,
+		BoundAccountIDs: []string{"acc-1", "acc-1", "", "acc-1"},
+	})
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if len(entry.BoundAccountIDs) != 1 {
+		t.Fatalf("expected deduplication to 1, got %d", len(entry.BoundAccountIDs))
+	}
+}
+
+func TestAddApiKeyStrictWithoutBindingFails(t *testing.T) {
+	cfgFile := filepath.Join(t.TempDir(), "config.json")
+	if err := Init(cfgFile); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	_, err := AddApiKey(ApiKeyEntry{
+		Name:          "strict-empty",
+		Key:           "sk-strict-empty",
+		Enabled:       true,
+		StrictBinding: true,
+	})
+	if err == nil {
+		t.Fatalf("expected error for strict binding without bound accounts")
+	}
+}
+
+func TestUpdateApiKeyFullBindingAtomic(t *testing.T) {
+	cfgFile := filepath.Join(t.TempDir(), "config.json")
+	if err := Init(cfgFile); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if err := AddAccount(Account{ID: "acc-1", Enabled: true}); err != nil {
+		t.Fatalf("add account: %v", err)
+	}
+	if err := AddAccount(Account{ID: "acc-2", Enabled: true}); err != nil {
+		t.Fatalf("add account: %v", err)
+	}
+
+	entry, err := AddApiKey(ApiKeyEntry{Name: "orig", Key: "sk-orig", Enabled: true})
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	ids := []string{"acc-1", "acc-2"}
+	strict := true
+	err = UpdateApiKeyFull(entry.ID, ApiKeyEntry{Name: "updated", Enabled: true}, &ApiKeyBindingPatch{
+		BoundAccountIDs: &ids,
+		StrictBinding:   &strict,
+	})
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	got := GetApiKeyEntry(entry.ID)
+	if got.Name != "updated" {
+		t.Fatalf("expected name updated, got %q", got.Name)
+	}
+	if len(got.BoundAccountIDs) != 2 || !got.StrictBinding {
+		t.Fatalf("expected binding updated, got %+v", got)
+	}
+}
+
+func TestUpdateApiKeyClearBinding(t *testing.T) {
+	cfgFile := filepath.Join(t.TempDir(), "config.json")
+	if err := Init(cfgFile); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if err := AddAccount(Account{ID: "acc-1", Enabled: true}); err != nil {
+		t.Fatalf("add account: %v", err)
+	}
+	entry, err := AddApiKey(ApiKeyEntry{
+		Name:            "bound",
+		Key:             "sk-clr",
+		Enabled:         true,
+		BoundAccountIDs: []string{"acc-1"},
+		StrictBinding:   true,
+	})
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	empty := []string{}
+	err = UpdateApiKeyFull(entry.ID, ApiKeyEntry{Enabled: true}, &ApiKeyBindingPatch{
+		BoundAccountIDs: &empty,
+	})
+	if err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	got := GetApiKeyEntry(entry.ID)
+	if len(got.BoundAccountIDs) != 0 {
+		t.Fatalf("expected binding cleared, got %v", got.BoundAccountIDs)
+	}
+	if got.StrictBinding {
+		t.Fatalf("expected strict binding to be forced false when binding cleared")
+	}
+}
+
+func TestUpdateApiKeyClearBindingWithStrictFails(t *testing.T) {
+	cfgFile := filepath.Join(t.TempDir(), "config.json")
+	if err := Init(cfgFile); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if err := AddAccount(Account{ID: "acc-1", Enabled: true}); err != nil {
+		t.Fatalf("add account: %v", err)
+	}
+	entry, err := AddApiKey(ApiKeyEntry{
+		Name:            "bound",
+		Key:             "sk-cs",
+		Enabled:         true,
+		BoundAccountIDs: []string{"acc-1"},
+		StrictBinding:   true,
+	})
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	empty := []string{}
+	strict := true
+	err = UpdateApiKeyFull(entry.ID, ApiKeyEntry{Enabled: true}, &ApiKeyBindingPatch{
+		BoundAccountIDs: &empty,
+		StrictBinding:   &strict,
+	})
+	if err == nil {
+		t.Fatalf("expected error when clearing binding with strict=true")
+	}
+}
+
+func TestUpdateApiKeyOmittedBindingKeepsExisting(t *testing.T) {
+	cfgFile := filepath.Join(t.TempDir(), "config.json")
+	if err := Init(cfgFile); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if err := AddAccount(Account{ID: "acc-1", Enabled: true}); err != nil {
+		t.Fatalf("add account: %v", err)
+	}
+	entry, err := AddApiKey(ApiKeyEntry{
+		Name:            "keep",
+		Key:             "sk-keep",
+		Enabled:         true,
+		BoundAccountIDs: []string{"acc-1"},
+		StrictBinding:   true,
+	})
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	// Update without binding patch - should preserve existing
+	err = UpdateApiKey(entry.ID, ApiKeyEntry{Name: "renamed", Enabled: true})
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	got := GetApiKeyEntry(entry.ID)
+	if len(got.BoundAccountIDs) != 1 || !got.StrictBinding {
+		t.Fatalf("expected binding preserved, got %+v", got)
+	}
+}
+
+func TestCloneApiKeyEntryIsDeepCopy(t *testing.T) {
+	original := ApiKeyEntry{
+		ID:              "test",
+		BoundAccountIDs: []string{"acc-1", "acc-2"},
+	}
+	clone := cloneApiKeyEntry(original)
+	clone.BoundAccountIDs[0] = "mutated"
+	if original.BoundAccountIDs[0] == "mutated" {
+		t.Fatalf("clone shares backing array with original")
+	}
+}
+
+func TestDeleteAccountScrubsBindings(t *testing.T) {
+	cfgFile := filepath.Join(t.TempDir(), "config.json")
+	if err := Init(cfgFile); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if err := AddAccount(Account{ID: "acc-1", Enabled: true}); err != nil {
+		t.Fatalf("add account: %v", err)
+	}
+	if err := AddAccount(Account{ID: "acc-2", Enabled: true}); err != nil {
+		t.Fatalf("add account: %v", err)
+	}
+	_, err := AddApiKey(ApiKeyEntry{
+		Name:            "bound",
+		Key:             "sk-scrub",
+		Enabled:         true,
+		BoundAccountIDs: []string{"acc-1", "acc-2"},
+		StrictBinding:   true,
+	})
+	if err != nil {
+		t.Fatalf("add key: %v", err)
+	}
+
+	if err := DeleteAccount("acc-1"); err != nil {
+		t.Fatalf("delete account: %v", err)
+	}
+
+	keys := ListApiKeys()
+	if len(keys) != 1 {
+		t.Fatalf("expected 1 key, got %d", len(keys))
+	}
+	if len(keys[0].BoundAccountIDs) != 1 || keys[0].BoundAccountIDs[0] != "acc-2" {
+		t.Fatalf("expected acc-1 scrubbed, got %v", keys[0].BoundAccountIDs)
+	}
+	if !keys[0].StrictBinding {
+		t.Fatalf("expected strict binding preserved (acc-2 still bound)")
+	}
+}
+
+func TestDeleteAccountScrubsBindingsClearsStrict(t *testing.T) {
+	cfgFile := filepath.Join(t.TempDir(), "config.json")
+	if err := Init(cfgFile); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if err := AddAccount(Account{ID: "only", Enabled: true}); err != nil {
+		t.Fatalf("add account: %v", err)
+	}
+	_, err := AddApiKey(ApiKeyEntry{
+		Name:            "strict-only",
+		Key:             "sk-strict-only",
+		Enabled:         true,
+		BoundAccountIDs: []string{"only"},
+		StrictBinding:   true,
+	})
+	if err != nil {
+		t.Fatalf("add key: %v", err)
+	}
+
+	if err := DeleteAccount("only"); err != nil {
+		t.Fatalf("delete account: %v", err)
+	}
+
+	keys := ListApiKeys()
+	if len(keys[0].BoundAccountIDs) != 0 {
+		t.Fatalf("expected binding cleared, got %v", keys[0].BoundAccountIDs)
+	}
+	if keys[0].StrictBinding {
+		t.Fatalf("expected strict binding forced false when all bound accounts removed")
 	}
 }
