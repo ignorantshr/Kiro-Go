@@ -10,8 +10,14 @@ import (
 	"time"
 )
 
+// defaultResponsesModel is used when a /v1/responses request omits the model field.
 const defaultResponsesModel = "claude-sonnet-4.5"
 
+// handleOpenAIResponses serves the OpenAI Responses API (POST /v1/responses).
+// It rebuilds prior context from previous_response_id (if any), folds in this
+// turn's instructions and input, translates everything into a Kiro payload, and
+// dispatches to the streaming or non-streaming handler. Successful responses are
+// persisted (unless store=false) so they can anchor a future previous_response_id.
 func (h *Handler) handleOpenAIResponses(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "Method Not Allowed", 405)
@@ -123,6 +129,9 @@ func (h *Handler) handleOpenAIResponses(w http.ResponseWriter, r *http.Request) 
 		apiKeyEntry, respID, &req, storedInputCopy, storeResponse)
 }
 
+// handleResponsesNonStream runs the account retry loop, collects the full upstream
+// response, then writes a single JSON ResponsesObject. Token counts prefer the
+// upstream-reported context usage, falling back to the request estimate.
 func (h *Handler) handleResponsesNonStream(
 	w http.ResponseWriter, payload *KiroPayload, model string, thinking bool,
 	estimatedInputTokens int, apiKeyEntry *config.ApiKeyEntry, respID string,
@@ -216,6 +225,9 @@ func (h *Handler) handleResponsesNonStream(
 	h.sendOpenAIError(w, 500, "server_error", lastErr.Error())
 }
 
+// buildResponsesObject assembles a completed ResponsesObject from the decoded
+// assistant text and tool calls. It always emits at least one output item (an
+// empty assistant message) so clients never receive an empty output array.
 func buildResponsesObject(
 	id, model, content string, toolUses []KiroToolUse,
 	inputTokens, outputTokens int, req *ResponsesRequest,
@@ -273,6 +285,11 @@ func buildResponsesObject(
 	}
 }
 
+// handleResponsesStream emits the Responses API SSE event sequence
+// (response.created → in_progress → output_item/content deltas → completed).
+// If an account fails before any output is sent, it transparently rotates to the
+// next account; once streaming has started, a mid-stream error becomes a
+// response.failed event since the partial output can't be retracted.
 func (h *Handler) handleResponsesStream(
 	w http.ResponseWriter, payload *KiroPayload, model string, thinking bool,
 	estimatedInputTokens int, apiKeyEntry *config.ApiKeyEntry, respID string,

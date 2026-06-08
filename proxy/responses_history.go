@@ -74,6 +74,11 @@ func collectAncestorChain(prev *ResponsesObject) []*ResponsesObject {
 	return stack
 }
 
+// outputToMessages converts a stored response's output items back into
+// OpenAI chat messages so they can be replayed as history. Text "message"
+// items become assistant/role messages; "function_call" items become an
+// assistant message carrying the tool call. Empty assistant messages are
+// skipped to avoid polluting the replayed history.
 func outputToMessages(items []ResponseOutputItem) []OpenAIMessage {
 	if len(items) == 0 {
 		return nil
@@ -108,6 +113,8 @@ func outputToMessages(items []ResponseOutputItem) []OpenAIMessage {
 	return out
 }
 
+// joinTextParts concatenates the text of all textual content parts
+// (output_text/text/input_text), ignoring non-text parts.
 func joinTextParts(parts []ResponseContentPart) string {
 	if len(parts) == 0 {
 		return ""

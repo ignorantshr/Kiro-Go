@@ -1,3 +1,7 @@
+// account_failover.go classifies upstream errors by string-matching the message
+// and decides how the offending account is handled: short cooldown, quota cooldown,
+// overage refresh, or hard disable (ban). It sits above the endpoint-level fallback
+// in CallKiroAPI and below the handler's account-retry loop.
 package proxy
 
 import (
@@ -7,18 +11,26 @@ import (
 	"time"
 )
 
+// maxAccountRetryAttempts caps how many different accounts the handler will try
+// for a single client request before giving up.
 const maxAccountRetryAttempts = 3
 
+// isQuotaErrorMessage reports whether the error looks like a rate-limit/quota hit
+// (HTTP 429 or a "quota" mention). Quota errors trigger a 1h account cooldown.
 func isQuotaErrorMessage(msg string) bool {
 	msg = strings.ToLower(msg)
 	return strings.Contains(msg, "429") || strings.Contains(msg, "quota")
 }
 
+// isOverageErrorMessage reports whether the upstream rejected the request because
+// the account exceeded its overage allowance (HTTP 402 + "overage").
 func isOverageErrorMessage(msg string) bool {
 	msg = strings.ToLower(msg)
 	return strings.Contains(msg, "402") && strings.Contains(msg, "overage")
 }
 
+// isSuspensionErrorMessage reports whether AWS has temporarily suspended the account
+// (typically flagged as unusual activity). These accounts get hard-disabled.
 func isSuspensionErrorMessage(msg string) bool {
 	msg = strings.ToLower(msg)
 	return strings.Contains(msg, "temporarily_suspended") ||
@@ -26,11 +38,15 @@ func isSuspensionErrorMessage(msg string) bool {
 		strings.Contains(msg, "account suspended")
 }
 
+// isProfileUnavailableErrorMessage reports whether no Kiro profile ARN could be
+// resolved for the account. This is treated as a soft, transient failure.
 func isProfileUnavailableErrorMessage(msg string) bool {
 	msg = strings.ToLower(msg)
 	return strings.Contains(msg, "no available kiro profile")
 }
 
+// isAuthErrorMessage reports whether the failure is an authentication/authorization
+// problem (401/403, expired or invalid token, bad grant). These accounts get banned.
 func isAuthErrorMessage(msg string) bool {
 	msg = strings.ToLower(msg)
 	return strings.Contains(msg, "http 401") ||
@@ -45,6 +61,9 @@ func isAuthErrorMessage(msg string) bool {
 		strings.Contains(msg, "refresh token expired")
 }
 
+// disableAccount marks an account disabled with a ban status/reason, persists the
+// change, and reloads the pool so it stops being selected. No-op if the account is
+// already in the same disabled state.
 func (h *Handler) disableAccount(account *config.Account, banStatus, banReason string) {
 	if account == nil {
 		return
@@ -69,6 +88,9 @@ func (h *Handler) disableAccount(account *config.Account, banStatus, banReason s
 	h.pool.Reload()
 }
 
+// disableAccountOverage re-fetches the account's authoritative overage status from
+// upstream and persists it, rather than blindly disabling. Whether the account keeps
+// serving is then decided by isQuotaBlocked on the next selection pass.
 func (h *Handler) disableAccountOverage(account *config.Account) {
 	if account == nil {
 		return
@@ -88,6 +110,10 @@ func (h *Handler) disableAccountOverage(account *config.Account) {
 	h.pool.Reload()
 }
 
+// handleAccountFailure routes an upstream error to the appropriate account action:
+// overage refresh, quota cooldown, hard disable (suspension/auth), or a generic
+// short cooldown for everything else. It is the single entry point the retry loop
+// calls after a failed CallKiroAPI.
 func (h *Handler) handleAccountFailure(account *config.Account, err error) {
 	if account == nil || err == nil {
 		return

@@ -1,5 +1,10 @@
 package proxy
 
+// On-disk persistence for the OpenAI Responses API. Each response is stored as
+// a JSON file under <config-dir>/responses, keyed by a sanitized response ID,
+// so that a follow-up request carrying previous_response_id can reconstruct the
+// prior turn. Files older than responsesDefaultTTL are purged.
+
 import (
 	"crypto/rand"
 	"encoding/hex"
@@ -18,10 +23,12 @@ const (
 	responsesDefaultTTL = 30 * 24 * time.Hour
 )
 
+// responsesDir returns the directory where stored responses live.
 func responsesDir() string {
 	return filepath.Join(config.GetConfigDir(), responsesDirName)
 }
 
+// generateResponseID returns a unique, URL-safe response ID (resp_<random><time>).
 func generateResponseID() string {
 	buf := make([]byte, 12)
 	if _, err := rand.Read(buf); err != nil {
@@ -30,6 +37,8 @@ func generateResponseID() string {
 	return "resp_" + hex.EncodeToString(buf) + fmt.Sprintf("%08x", time.Now().Unix()&0xffffffff)
 }
 
+// generateOutputItemID returns a unique ID for an output item, namespaced by
+// the given prefix (e.g. "msg", "fc").
 func generateOutputItemID(prefix string) string {
 	buf := make([]byte, 8)
 	if _, err := rand.Read(buf); err != nil {
@@ -38,6 +47,9 @@ func generateOutputItemID(prefix string) string {
 	return prefix + "_" + hex.EncodeToString(buf)
 }
 
+// saveResponse persists resp to disk atomically (write to .tmp then rename),
+// stamping StoredAt if unset. The file is written 0600 since it may contain
+// conversation content.
 func saveResponse(resp *ResponsesObject) error {
 	if resp == nil || resp.ID == "" {
 		return fmt.Errorf("response missing id")
@@ -81,6 +93,8 @@ func saveResponse(resp *ResponsesObject) error {
 	return nil
 }
 
+// loadResponse reads a stored response by ID. If the file is older than
+// responsesDefaultTTL it is deleted and an error is returned.
 func loadResponse(id string) (*ResponsesObject, error) {
 	if id == "" {
 		return nil, fmt.Errorf("empty response id")
@@ -114,6 +128,9 @@ func loadResponse(id string) (*ResponsesObject, error) {
 	}, nil
 }
 
+// purgeExpiredResponses removes stored-response files whose mtime is older than
+// ttl (falling back to responsesDefaultTTL when ttl <= 0). Called periodically
+// by the background goroutine.
 func purgeExpiredResponses(ttl time.Duration) {
 	if ttl <= 0 {
 		ttl = responsesDefaultTTL
@@ -145,6 +162,8 @@ func logResponsesPersistFailure(id string, err error) {
 	logger.Warnf("[Responses] persist %s failed: %v", id, err)
 }
 
+// sanitizeResponseID strips any character outside [A-Za-z0-9_-] so the ID is
+// safe to use as a filename and cannot escape the responses directory.
 func sanitizeResponseID(id string) string {
 	cleaned := strings.Map(func(r rune) rune {
 		switch {
@@ -166,6 +185,8 @@ func sanitizeResponseID(id string) string {
 	return cleaned
 }
 
+// storedResponseDoc is the on-disk JSON shape. It differs from ResponsesObject
+// in that StoredInput is serialized (so the original request can be replayed).
 type storedResponseDoc struct {
 	ID                 string               `json:"id"`
 	Object             string               `json:"object"`

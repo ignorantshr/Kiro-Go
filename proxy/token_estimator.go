@@ -1,10 +1,17 @@
 package proxy
 
+// Heuristic token estimation. The upstream does not always return token counts,
+// so these functions approximate them from text length. The character-class
+// weighting (regular ASCII / digits / symbols / non-ASCII) is tuned to roughly
+// match tokenizer behavior without pulling in a real tokenizer dependency.
+
 import (
 	"encoding/json"
 	"math"
 )
 
+// estimateApproxTokens approximates the token count of text by weighting
+// characters by class. Short strings (<5 runes) use a simpler ceil(len/3) rule.
 func estimateApproxTokens(text string) int {
 	if text == "" {
 		return 0
@@ -46,6 +53,8 @@ func estimateApproxTokens(text string) int {
 	return estimated
 }
 
+// estimateClaudeRequestInputTokens sums approximate input tokens across the
+// system prompt, messages, and tool definitions of a Claude request.
 func estimateClaudeRequestInputTokens(req *ClaudeRequest) int {
 	if req == nil {
 		return 0
@@ -66,6 +75,8 @@ func estimateClaudeRequestInputTokens(req *ClaudeRequest) int {
 	return total
 }
 
+// estimateClaudeOutputTokens approximates output tokens from the assistant's
+// text, thinking content, and any tool-use calls.
 func estimateClaudeOutputTokens(content, thinkingContent string, toolUses []KiroToolUse) int {
 	total := estimateApproxTokens(content)
 	total += estimateApproxTokens(thinkingContent)
@@ -78,6 +89,9 @@ func estimateClaudeOutputTokens(content, thinkingContent string, toolUses []Kiro
 	return total
 }
 
+// estimateClaudeValueTokens recursively estimates tokens for an arbitrary
+// Claude content value (string, list of blocks, or a typed block map such as
+// text/thinking/tool_use/tool_result).
 func estimateClaudeValueTokens(v interface{}) int {
 	switch value := v.(type) {
 	case nil:
@@ -138,6 +152,8 @@ func estimateClaudeValueTokens(v interface{}) int {
 	}
 }
 
+// estimateJSONTokens estimates tokens for an arbitrary value by marshaling it
+// to JSON and measuring the result.
 func estimateJSONTokens(v interface{}) int {
 	if v == nil {
 		return 0
@@ -151,6 +167,8 @@ func estimateJSONTokens(v interface{}) int {
 	return estimateApproxTokens(string(b))
 }
 
+// estimateOpenAIRequestInputTokens sums approximate input tokens across the
+// messages (including tool calls) and tool definitions of an OpenAI request.
 func estimateOpenAIRequestInputTokens(req *OpenAIRequest) int {
 	if req == nil {
 		return 0
@@ -176,6 +194,8 @@ func estimateOpenAIRequestInputTokens(req *OpenAIRequest) int {
 	return total
 }
 
+// estimateOpenAIContentTokens estimates tokens for an OpenAI message content
+// value, which may be a string or a multi-part array.
 func estimateOpenAIContentTokens(content interface{}) int {
 	switch value := content.(type) {
 	case nil:
@@ -191,6 +211,8 @@ func estimateOpenAIContentTokens(content interface{}) int {
 	}
 }
 
+// estimateOpenAIOutputTokens approximates output tokens for an OpenAI response.
+// Output shape matches Claude's, so it reuses the same estimator.
 func estimateOpenAIOutputTokens(content, reasoningContent string, toolUses []KiroToolUse) int {
 	return estimateClaudeOutputTokens(content, reasoningContent, toolUses)
 }
