@@ -16,7 +16,6 @@ RUN apk --no-cache add ca-certificates
 
 WORKDIR /app
 COPY --from=builder /app/kiro-go .
-COPY --from=builder /app/web ./web
 RUN mkdir -p /app/data
 
 EXPOSE 8080

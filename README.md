@@ -51,6 +51,24 @@ go build -o kiro-go .
 ./kiro-go
 ```
 
+### Prebuilt Deploy (compile locally, ship only the binary)
+
+Cross-compile on your machine and ship just the self-contained binary to a remote Docker host — no source, no Go toolchain, no `web/` on the server (static assets are embedded into the binary). Assets live under `deploy/`.
+
+First time, manually upload the two config files to the remote dir (e.g. `/home/ec2-user/kiro-go`):
+
+```bash
+scp deploy/Dockerfile deploy/docker-compose.yml user@host:/home/ec2-user/kiro-go/
+```
+
+Then deploy (and for every later update, just rerun this):
+
+```bash
+./deploy/deploy.sh user@host /home/ec2-user/kiro-go
+```
+
+It cross-compiles `linux/amd64` (set `GOARCH=arm64` for arm servers), `scp`s the binary, and runs `docker compose up -d --build` on the remote.
+
 ### Deploy on Zeabur
 
 The repo already includes a `Dockerfile`, so it builds and runs on Zeabur out of the box.

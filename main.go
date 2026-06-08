@@ -14,7 +14,9 @@
 package main
 
 import (
+	"embed"
 	"fmt"
+	"io/fs"
 	"kiro-go/config"
 	"kiro-go/logger"
 	"kiro-go/pool"
@@ -25,6 +27,11 @@ import (
 	"path/filepath"
 	"time"
 )
+
+// webFS embeds the admin panel static assets so the binary is self-contained.
+//
+//go:embed all:web
+var webFS embed.FS
 
 func main() {
 	// 配置文件路径，支持环境变量覆盖
@@ -54,8 +61,14 @@ func main() {
 	// 初始化账号池
 	pool.GetPool()
 
+	// web 静态资源已 embed 进二进制，剥掉顶层 web/ 前缀后注入 Handler
+	webRoot, err := fs.Sub(webFS, "web")
+	if err != nil {
+		log.Fatalf("Failed to mount embedded web assets: %v", err)
+	}
+
 	// 创建 HTTP 处理器（包含后台刷新任务）
-	handler := proxy.NewHandler()
+	handler := proxy.NewHandler(webRoot)
 
 	// 启动服务器
 	addr := fmt.Sprintf("%s:%d", config.GetHost(), config.GetPort())

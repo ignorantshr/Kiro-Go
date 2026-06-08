@@ -1,0 +1,14 @@
+services:
+  kiro-go:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "11435:8080"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - CONFIG_PATH=/app/data/config.json
+      # 公网部署请取消注释并改成强密码，否则默认 changeme
+      # - ADMIN_PASSWORD=changeme
+    restart: unless-stopped

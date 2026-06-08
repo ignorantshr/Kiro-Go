@@ -51,6 +51,24 @@ go build -o kiro-go .
 ./kiro-go
 ```
 
+### 预编译部署（本地编译，只传二进制）
+
+在本地交叉编译，只把自包含的二进制传到远程 Docker 主机——服务器上无需源码、无需 Go 工具链、无需 `web/`（静态资源已 `go:embed` 进二进制）。相关文件在 `deploy/` 目录。
+
+首次手动把两个配置文件上传到远程目录（如 `/home/ec2-user/kiro-go`）：
+
+```bash
+scp deploy/Dockerfile deploy/docker-compose.yml user@host:/home/ec2-user/kiro-go/
+```
+
+之后部署（每次更新重跑这一条即可）：
+
+```bash
+./deploy/deploy.sh user@host /home/ec2-user/kiro-go
+```
+
+脚本会交叉编译 `linux/amd64`（arm 服务器设 `GOARCH=arm64`）、`scp` 二进制，并在远程执行 `docker compose up -d --build`。
+
 ### 部署到 Zeabur
 
 仓库已包含 `Dockerfile`，可直接在 Zeabur 上构建运行。

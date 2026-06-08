@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"kiro-go/auth"
 	"kiro-go/config"
 	"kiro-go/logger"
@@ -38,6 +39,10 @@ type Handler struct {
 	modelsCacheTime int64
 	promptCache     *promptCacheTracker
 	tokenRefreshMu  sync.Mutex
+	// web 静态资源（embed 进二进制）：fileServer 负责静态资源的 MIME/条件请求，
+	// webFS 用于面板入口直接读 index.html（绕开 FileServer 对 /index.html 的 301 跳转）
+	webFS      fs.FS
+	fileServer http.Handler
 }
 
 type thinkingStreamSource int
@@ -209,7 +214,7 @@ func validateOpenAIRequestShape(req *OpenAIRequest) string {
 	return ""
 }
 
-func NewHandler() *Handler {
+func NewHandler(webFS fs.FS) *Handler {
 	// 启动时应用代理配置
 	applyProxyConfig(config.GetProxyURL())
 
@@ -225,6 +230,8 @@ func NewHandler() *Handler {
 		stopRefresh:     make(chan struct{}),
 		stopStatsSaver:  make(chan struct{}),
 		promptCache:     newPromptCacheTracker(defaultPromptCacheTTL),
+		webFS:           webFS,
+		fileServer:      http.FileServer(http.FS(webFS)),
 	}
 	// 启动后台刷新
 	go h.backgroundRefresh()
@@ -3323,12 +3330,17 @@ func (h *Handler) apiGetAccountModelsCached(w http.ResponseWriter, r *http.Reque
 // ==================== 静态文件服务 ====================
 
 func (h *Handler) serveAdminPage(w http.ResponseWriter, r *http.Request) {
-	http.ServeFile(w, r, "web/index.html")
+	data, err := fs.ReadFile(h.webFS, "index.html")
+	if err != nil {
+		http.Error(w, "admin page not found", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(data)
 }
 
 func (h *Handler) serveStaticFile(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/kiro_admin/")
-	http.ServeFile(w, r, "web/"+path)
+	http.StripPrefix("/kiro_admin/", h.fileServer).ServeHTTP(w, r)
 }
 
 // apiGetThinkingConfig 获取 thinking 配置

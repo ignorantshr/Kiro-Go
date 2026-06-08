@@ -27,7 +27,13 @@ go vet ./...                   # vet
 gofmt -l .                     # list unformatted files
 
 docker-compose up -d           # run in Docker (mounts ./data for persistence)
+
+# prebuilt deploy: cross-compile locally, ship only the binary to a remote Docker host
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o kiro-go .  # build for the target host
+./deploy/deploy.sh user@host [remote-dir]                    # build + scp binary + remote `compose up -d --build`
 ```
+
+`deploy/` holds the prebuilt-deploy assets: a thin `Dockerfile` that only `COPY`s the binary (no Go toolchain, no source, no `web/` — all embedded), a `docker-compose.yml`, and `deploy.sh`. The first time, manually upload `deploy/Dockerfile` + `deploy/docker-compose.yml` to the remote dir; thereafter `deploy.sh` only ships the freshly cross-compiled binary and re-runs `compose up -d --build`. `ca-certificates` in the thin image is required for the binary's TLS to AWS upstream.
 
 There is **no Go CI** — only a Docker image build (`.github/workflows/docker.yml`). Run `go build`, `go test ./...`, and `go vet ./...` locally before committing; nothing else will catch breakage.
 
@@ -61,7 +67,7 @@ For an inference request (`handleClaudeMessages` / `handleOpenAIChat` / `handleO
 - **`auth/`** — OAuth login + token refresh. Three login methods: Builder ID (device-code flow), IAM Identity Center / enterprise SSO, and raw SSO token import.
 - **`proxy/`** — the bulk of the code (see below).
 - **`logger/`** — leveled logger (debug/info/warn/error), level set once at startup.
-- **`web/`** — vanilla-JS admin panel (no build step) + Tailwind via CDN vendor copy. Strings live in `web/locales/{en,zh}.json`. `index.html` is the live panel; `index-legacy.html` is a fallback.
+- **`web/`** — vanilla-JS admin panel (no build step) + Tailwind via CDN vendor copy. Strings live in `web/locales/{en,zh}.json`. `index.html` is the live panel; `index-legacy.html` is a fallback. The whole dir is **embedded into the binary via `//go:embed all:web` in `main.go`** and injected into `NewHandler(fs.FS)`, so the binary is self-contained — editing `web/` files requires a rebuild to take effect. `serveAdminPage` reads `index.html` directly from the embed FS (not via `http.FileServer`, which would 301 `/index.html`→`./`); `serveStaticFile` serves the rest through `http.FileServer`.
 
 ### Inside `proxy/`
 
