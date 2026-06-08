@@ -297,6 +297,23 @@ func ClaudeToKiro(req *ClaudeRequest, thinking bool) *KiroPayload {
 		finalContent = minimalFallbackUserContent
 	}
 
+	// Orphaned tool results (no matching active assistant tool turn) are not
+	// attached structurally, so their text must be folded into the current
+	// message or it is lost. This matters when the orphaned result carries an
+	// image: normalizeUserContent fills finalContent with the image placeholder,
+	// which otherwise hides the tool's textual output. Append the narrated
+	// results unless finalContent already is that narration.
+	if !keepCurrentToolResults && len(currentToolResults) > 0 {
+		narrated := buildToolResultsContinuation(currentToolResults)
+		if narrated != minimalFallbackUserContent && !strings.Contains(finalContent, narrated) {
+			if finalContent == minimalFallbackUserContent {
+				finalContent = narrated
+			} else {
+				finalContent = finalContent + "\n\n" + narrated
+			}
+		}
+	}
+
 	// 转换工具
 	kiroTools, toolNameMap := convertClaudeTools(req.Tools)
 

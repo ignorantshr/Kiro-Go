@@ -554,12 +554,15 @@ func TestClaudeToolResultMixedTextAndImage(t *testing.T) {
 	if len(cur.Images) != 1 {
 		t.Fatalf("expected one image extracted, got %d", len(cur.Images))
 	}
-	if cur.UserInputMessageContext == nil || len(cur.UserInputMessageContext.ToolResults) != 1 {
-		t.Fatalf("expected one tool result")
+	// This tool_result is orphaned (no matching assistant tool_use), so per the
+	// single-active-tool-turn invariant it is flattened into the current message
+	// text rather than attached as a structured ToolResult. The original text must
+	// survive in the flattened content.
+	if cur.UserInputMessageContext != nil && len(cur.UserInputMessageContext.ToolResults) != 0 {
+		t.Fatalf("orphaned tool result must be flattened, not attached structurally")
 	}
-	gotText := cur.UserInputMessageContext.ToolResults[0].Content[0].Text
-	if gotText != "here is the screenshot" {
-		t.Fatalf("expected original tool text preserved, got %q", gotText)
+	if !strings.Contains(cur.Content, "here is the screenshot") {
+		t.Fatalf("expected original tool text preserved in flattened content, got %q", cur.Content)
 	}
 }
 
@@ -624,10 +627,13 @@ func TestOpenAIToolResultImageCarriedWhenFollowedByUser(t *testing.T) {
 
 	payload := OpenAIToKiro(req, false)
 
+	// The tool result is flushed into history and narrated into text by
+	// sanitizeKiroHistory (which clears the structured ToolResults), but its image
+	// must remain attached to that history user turn. Count images on the history
+	// turn that carries the narrated "Tool results" text.
 	var toolHistImages int
 	for _, h := range payload.ConversationState.History {
-		if h.UserInputMessage != nil && h.UserInputMessage.UserInputMessageContext != nil &&
-			len(h.UserInputMessage.UserInputMessageContext.ToolResults) > 0 {
+		if h.UserInputMessage != nil && strings.Contains(h.UserInputMessage.Content, "Tool results") {
 			toolHistImages += len(h.UserInputMessage.Images)
 		}
 	}
