@@ -5,6 +5,7 @@ import (
 	"kiro-go/pool"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func newTestHandler(t *testing.T, accounts ...config.Account) *Handler {
@@ -19,7 +20,7 @@ func newTestHandler(t *testing.T, accounts ...config.Account) *Handler {
 		}
 	}
 	p := pool.GetPool()
-	p.Reload()
+	p.ResetForTest()
 	return &Handler{pool: p}
 }
 
@@ -32,7 +33,7 @@ func TestSelectAccountForRequestNilEntry(t *testing.T) {
 		t.Fatalf("AddAccount: %v", err)
 	}
 	p := pool.GetPool()
-	p.Reload()
+	p.ResetForTest()
 	h := &Handler{pool: p}
 
 	acc := h.selectAccountForRequest("", nil, nil)
@@ -50,7 +51,7 @@ func TestSelectAccountForRequestNoBoundAccounts(t *testing.T) {
 		t.Fatalf("AddAccount: %v", err)
 	}
 	p := pool.GetPool()
-	p.Reload()
+	p.ResetForTest()
 	h := &Handler{pool: p}
 
 	entry := &config.ApiKeyEntry{ID: "key-1", BoundAccountIDs: nil}
@@ -72,7 +73,7 @@ func TestSelectAccountForRequestPrefersBoundAccount(t *testing.T) {
 		t.Fatalf("AddAccount: %v", err)
 	}
 	p := pool.GetPool()
-	p.Reload()
+	p.ResetForTest()
 	h := &Handler{pool: p}
 
 	entry := &config.ApiKeyEntry{
@@ -97,7 +98,7 @@ func TestSelectAccountForRequestStrictBindingFailsWhenBoundUnavailable(t *testin
 		t.Fatalf("AddAccount: %v", err)
 	}
 	p := pool.GetPool()
-	p.Reload()
+	p.ResetForTest()
 	h := &Handler{pool: p}
 
 	// Exclude the bound account (simulates it failed in prior attempt)
@@ -113,6 +114,41 @@ func TestSelectAccountForRequestStrictBindingFailsWhenBoundUnavailable(t *testin
 	}
 }
 
+// Selection no longer filters near-expiry tokens; the request path refreshes
+// them synchronously via ensureValidToken. A strictly-bound account that is
+// close to expiry must therefore still be selectable, not dropped to nil.
+func TestSelectAccountForRequestStrictBindingKeepsNearExpiryBoundAccount(t *testing.T) {
+	cfgFile := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Init(cfgFile); err != nil {
+		t.Fatalf("config.Init: %v", err)
+	}
+	if err := config.AddAccount(config.Account{
+		ID:           "bound",
+		Enabled:      true,
+		AccessToken:  "access-token",
+		RefreshToken: "refresh-token",
+		ExpiresAt:    time.Now().Unix() + 60,
+	}); err != nil {
+		t.Fatalf("AddAccount: %v", err)
+	}
+	p := pool.GetPool()
+	p.ResetForTest()
+	h := &Handler{pool: p}
+
+	entry := &config.ApiKeyEntry{
+		ID:              "key-1",
+		BoundAccountIDs: []string{"bound"},
+		StrictBinding:   true,
+	}
+	acc := h.selectAccountForRequest("", nil, entry)
+	if acc == nil {
+		t.Fatal("expected near-expiry bound account to remain selectable")
+	}
+	if acc.ID != "bound" {
+		t.Fatalf("expected bound account, got %q", acc.ID)
+	}
+}
+
 func TestSelectAccountForRequestNonStrictFallsBackToGlobal(t *testing.T) {
 	cfgFile := filepath.Join(t.TempDir(), "config.json")
 	if err := config.Init(cfgFile); err != nil {
@@ -125,7 +161,7 @@ func TestSelectAccountForRequestNonStrictFallsBackToGlobal(t *testing.T) {
 		t.Fatalf("AddAccount: %v", err)
 	}
 	p := pool.GetPool()
-	p.Reload()
+	p.ResetForTest()
 	h := &Handler{pool: p}
 
 	excluded := map[string]bool{"bound": true}
@@ -155,7 +191,7 @@ func TestSelectAccountForRequestNonStrictFallsBackWhenBoundCoolingDown(t *testin
 		t.Fatalf("AddAccount: %v", err)
 	}
 	p := pool.GetPool()
-	p.Reload()
+	p.ResetForTest()
 	// Cool down the bound account
 	p.RecordError("bound", true)
 	h := &Handler{pool: p}
@@ -187,7 +223,7 @@ func TestSelectAccountForRequestExcludedSharedAcrossPhases(t *testing.T) {
 		t.Fatalf("AddAccount: %v", err)
 	}
 	p := pool.GetPool()
-	p.Reload()
+	p.ResetForTest()
 	h := &Handler{pool: p}
 
 	// "shared" failed in binding phase, now excluded

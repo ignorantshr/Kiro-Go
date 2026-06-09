@@ -10,8 +10,6 @@ import (
 	"time"
 )
 
-const tokenRefreshSkewSeconds int64 = 120
-
 // AccountPool 账号池
 type AccountPool struct {
 	mu            sync.RWMutex
@@ -65,12 +63,39 @@ func (p *AccountPool) Reload() {
 	p.totalAccounts = len(enabled)
 }
 
+// ResetForTest clears all runtime selection state (cooldowns, error counts,
+// model lists, round-robin cursor) and rebuilds the account list from the
+// current config. Test-only: the package-level pool is a singleton shared
+// across tests, so tests that depend on a clean selection state must call this
+// instead of relying on Reload (which only rebuilds the account slice).
+func (p *AccountPool) ResetForTest() {
+	p.mu.Lock()
+	p.cooldowns = make(map[string]time.Time)
+	p.errorCounts = make(map[string]int)
+	p.modelLists = make(map[string]map[string]bool)
+	atomic.StoreUint64(&p.currentIndex, 0)
+	p.mu.Unlock()
+	p.Reload()
+}
+
 // selectOpts controls the shared account selection logic.
 type selectOpts struct {
 	allowedIDs map[string]bool // nil = no filter; non-nil empty = return nil immediately
 	model      string          // "" = no model filter
 	excluded   map[string]bool
 	strict     bool // true = skip cooldown fallback, return nil if nothing immediately available
+}
+
+// cloneAccount returns a value copy so callers never hold a pointer into the
+// pool's internal slice. Account is all scalar fields, so a shallow copy is a
+// fully independent snapshot. This keeps request goroutines from racing with
+// concurrent pool writers (UpdateToken / background refresh).
+func cloneAccount(a *config.Account) *config.Account {
+	if a == nil {
+		return nil
+	}
+	c := *a
+	return &c
 }
 
 // selectAccount is the shared implementation for all account selection methods.
@@ -113,15 +138,12 @@ func (p *AccountPool) selectAccount(opts selectOpts) *config.Account {
 			seen[acc.ID] = true
 			continue
 		}
-		if acc.ExpiresAt > 0 && time.Now().Unix() > acc.ExpiresAt-tokenRefreshSkewSeconds {
-			seen[acc.ID] = true
-			continue
-		}
+		// 不因 token 临近过期而跳过：刷新统一由请求前的 ensureValidToken 同步完成。
 		if isQuotaBlocked(*acc, allowOverUsage) {
 			seen[acc.ID] = true
 			continue
 		}
-		return acc
+		return cloneAccount(acc)
 	}
 
 	if opts.strict {
@@ -150,10 +172,10 @@ func (p *AccountPool) selectAccount(opts selectOpts) *config.Account {
 				earliest = cooldown
 			}
 		} else {
-			return acc
+			return cloneAccount(acc)
 		}
 	}
-	return best
+	return cloneAccount(best)
 }
 
 // GetNext 获取下一个可用账号（加权轮询）
@@ -233,7 +255,7 @@ func (p *AccountPool) GetByID(id string) *config.Account {
 	defer p.mu.RUnlock()
 	for i := range p.accounts {
 		if p.accounts[i].ID == id {
-			return &p.accounts[i]
+			return cloneAccount(&p.accounts[i])
 		}
 	}
 	return nil
@@ -354,7 +376,9 @@ func (p *AccountPool) MarkOverLimit(id string) {
 }
 
 // UpdateToken 更新账号 Token
-func (p *AccountPool) UpdateToken(id, accessToken, refreshToken string, expiresAt int64) {
+// 选号函数现返回账号副本，调用方持有的副本不再与池内元素共享内存，
+// 因此刷新后必须经此（按 ID 加锁）回写池内运行时快照，供后续请求使用。
+func (p *AccountPool) UpdateToken(id, accessToken, refreshToken string, expiresAt int64, profileArn string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for i := range p.accounts {
@@ -364,6 +388,25 @@ func (p *AccountPool) UpdateToken(id, accessToken, refreshToken string, expiresA
 				p.accounts[i].RefreshToken = refreshToken
 			}
 			p.accounts[i].ExpiresAt = expiresAt
+			if profileArn != "" {
+				p.accounts[i].ProfileArn = profileArn
+			}
+		}
+	}
+}
+
+// UpdateProfileArn 仅更新池内账号的 ProfileArn 运行时缓存（按 ID 加锁）。
+// 选号返回副本后，ResolveProfileArn 在副本上的本地赋值不会传播回池，
+// 需经此显式回写，避免后续请求反复重新解析 ARN。
+func (p *AccountPool) UpdateProfileArn(id, profileArn string) {
+	if profileArn == "" {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i := range p.accounts {
+		if p.accounts[i].ID == id {
+			p.accounts[i].ProfileArn = profileArn
 		}
 	}
 }

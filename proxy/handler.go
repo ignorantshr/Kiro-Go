@@ -286,7 +286,7 @@ func (h *Handler) refreshAllAccounts() {
 			}
 			account.ExpiresAt = newExpiresAt
 			config.UpdateAccountToken(account.ID, newAccessToken, newRefreshToken, newExpiresAt)
-			h.pool.UpdateToken(account.ID, newAccessToken, newRefreshToken, newExpiresAt)
+			h.pool.UpdateToken(account.ID, newAccessToken, newRefreshToken, newExpiresAt, profileArn)
 			if profileArn != "" {
 				account.ProfileArn = profileArn
 				config.UpdateAccountProfileArn(account.ID, profileArn)
@@ -2041,7 +2041,7 @@ func (h *Handler) ensureValidToken(account *config.Account) error {
 	}
 
 	// 更新内存
-	h.pool.UpdateToken(account.ID, accessToken, refreshToken, expiresAt)
+	h.pool.UpdateToken(account.ID, accessToken, refreshToken, expiresAt, profileArn)
 	account.AccessToken = accessToken
 	if refreshToken != "" {
 		account.RefreshToken = refreshToken
@@ -2517,7 +2517,7 @@ func (h *Handler) apiBatchAccounts(w http.ResponseWriter, r *http.Request) {
 						account.ProfileArn = profileArn
 						config.UpdateAccountProfileArn(id, profileArn)
 					}
-					h.pool.UpdateToken(id, newAccess, newRefresh, newExpires)
+					h.pool.UpdateToken(id, newAccess, newRefresh, newExpires, profileArn)
 				}
 			}
 			// 刷新账户信息
@@ -2846,8 +2846,9 @@ func (h *Handler) apiImportCredentials(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 用 refreshToken 刷新获取新的 accessToken。导入必须以一次成功的刷新为前提：
-	// 本地缓存里的 accessToken 不携带可信的过期时间，盲猜短 TTL 会让账号在选号时
-	// 永远被跳过，导致后台/按需刷新都无法触发（详见 ensureValidToken 与 Pick 的过期判定）。
+	// 本地缓存里的 accessToken 不携带可信的过期时间，且选号层不再按过期窗口拦截，
+	// 一旦带着不可用的 refreshToken 入库，请求前的 ensureValidToken 同步刷新会持续失败。
+	// 因此在导入时就要求一次成功刷新，确保拿到可信过期时间并验证 refreshToken 确实可用。
 	tempAccount := &config.Account{
 		RefreshToken: req.RefreshToken,
 		ClientID:     req.ClientID,
@@ -3128,7 +3129,7 @@ func (h *Handler) apiRefreshAccount(w http.ResponseWriter, r *http.Request, id s
 		}
 		account.ExpiresAt = newExpiresAt
 		config.UpdateAccountToken(id, newAccessToken, newRefreshToken, newExpiresAt)
-		h.pool.UpdateToken(id, newAccessToken, newRefreshToken, newExpiresAt)
+		h.pool.UpdateToken(id, newAccessToken, newRefreshToken, newExpiresAt, profileArn)
 		if profileArn != "" {
 			account.ProfileArn = profileArn
 			config.UpdateAccountProfileArn(id, profileArn)

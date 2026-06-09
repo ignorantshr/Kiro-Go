@@ -278,7 +278,7 @@ func setupResponsesTestHandler(t *testing.T) (*Handler, func()) {
 		t.Fatalf("disable fallback: %v", err)
 	}
 	p := accountpool.GetPool()
-	p.Reload()
+	p.ResetForTest()
 	h := &Handler{
 		pool:        p,
 		promptCache: newPromptCacheTracker(defaultPromptCacheTTL),

@@ -26,12 +26,12 @@ func installCleanAuthClient(t *testing.T) func() {
 }
 
 // TestApiImportCredentialsRejectsWhenRefreshFails verifies the regression:
-// previously, when auth.RefreshToken failed and the user supplied an accessToken,
-// the handler stored that accessToken with ExpiresAt = now+300, producing an
-// account that the pool would skip (Pick uses now > ExpiresAt-120 → ~3 min) and
-// that the on-demand refresh path could never repair (Pick filters it out before
-// ensureValidToken runs). The fix is to reject the import outright; the caller
-// must provide a refreshToken that actually works.
+// when auth.RefreshToken fails and the user supplied an accessToken, the handler
+// must NOT persist a half-broken account. A locally-cached accessToken carries no
+// trustworthy expiry, so the import has to be anchored on one successful refresh
+// to prove the refreshToken actually works and to obtain a real ExpiresAt. The
+// fix is to reject the import outright; the caller must provide a refreshToken
+// that actually works.
 func TestApiImportCredentialsRejectsWhenRefreshFails(t *testing.T) {
 	cfgFile := t.TempDir() + "/config.json"
 	if err := config.Init(cfgFile); err != nil {
@@ -71,7 +71,8 @@ func TestApiImportCredentialsRejectsWhenRefreshFails(t *testing.T) {
 	}
 
 	// Crucial: no account should have been created. The previous bug stored a
-	// half-broken account with ExpiresAt ~now+300 that would die in 3 minutes.
+	// half-broken account whose accessToken carried a guessed ~now+300 expiry
+	// and an unverified refreshToken, so it would fail on first real use.
 	if accs := config.GetAccounts(); len(accs) != 0 {
 		t.Fatalf("expected no accounts to be persisted on failed import, got %+v", accs)
 	}

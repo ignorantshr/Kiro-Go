@@ -81,6 +81,78 @@ func TestGetNextKeepsFiveMinuteTokenAvailable(t *testing.T) {
 	}
 }
 
+// TestGetNextKeepsNearExpiryTokenAvailable locks the post-refactor rule: the
+// selection layer no longer skips near-expiry tokens. A token 60s from expiry
+// (well inside the old 120s skew window that used to filter it out) must still
+// be selectable — the synchronous ensureValidToken at request time is the sole
+// refresh gate now.
+func TestGetNextKeepsNearExpiryTokenAvailable(t *testing.T) {
+	p := &AccountPool{}
+	account := config.Account{
+		ID:          "acct-near-expiry",
+		AccessToken: "access-token",
+		ExpiresAt:   time.Now().Unix() + 60,
+	}
+
+	p.accounts = []config.Account{account}
+
+	got := p.GetNext()
+	if got == nil {
+		t.Fatal("expected near-expiry token to remain selectable")
+	}
+	if got.ID != account.ID {
+		t.Fatalf("expected account %q, got %q", account.ID, got.ID)
+	}
+}
+
+// TestSelectAccountReturnsCopyNotPoolPointer guards the concurrency fix: every
+// selectAccount return path must hand back a copy, never a pointer into the
+// pool's internal slice. Otherwise a concurrent UpdateToken (background refresh
+// or request-time refresh) races the request goroutine reading the same fields.
+func TestSelectAccountReturnsCopyNotPoolPointer(t *testing.T) {
+	// Fast path: an immediately selectable account.
+	p := newTestPool(config.Account{ID: "a", AccessToken: "old"})
+	got := p.GetNext()
+	if got == nil {
+		t.Fatal("expected an account from fast path")
+	}
+	if got == &p.accounts[0] {
+		t.Fatal("fast path leaked pool-internal pointer")
+	}
+	p.UpdateToken("a", "new", "", 0, "")
+	if got.AccessToken != "old" {
+		t.Fatalf("returned copy mutated by UpdateToken: got %q", got.AccessToken)
+	}
+
+	// Cooldown fallback path: the only account is cooling down; non-strict
+	// callers still get it back — and it must also be a copy.
+	p2 := newTestPool(config.Account{ID: "b", AccessToken: "old"})
+	p2.RecordError("b", true) // 1h cooldown
+	fb := p2.GetNextWithinExcluding(map[string]bool{"b": true}, nil, false)
+	if fb == nil {
+		t.Fatal("expected cooldown fallback account")
+	}
+	if fb == &p2.accounts[0] {
+		t.Fatal("cooldown fallback leaked pool-internal pointer")
+	}
+	p2.UpdateToken("b", "new", "", 0, "")
+	if fb.AccessToken != "old" {
+		t.Fatalf("fallback copy mutated by UpdateToken: got %q", fb.AccessToken)
+	}
+}
+
+// TestUpdateProfileArnUpdatesPoolCache verifies the runtime ARN cache write-back
+// that compensates for selectAccount returning copies: ResolveProfileArn must be
+// able to push a resolved ARN into the pool so later selections see it.
+func TestUpdateProfileArnUpdatesPoolCache(t *testing.T) {
+	p := newTestPool(config.Account{ID: "a"})
+	p.UpdateProfileArn("a", "arn:test")
+	got := p.GetByID("a")
+	if got == nil || got.ProfileArn != "arn:test" {
+		t.Fatalf("expected pool ProfileArn cache updated, got %+v", got)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // IsAuthFailure
 // ---------------------------------------------------------------------------

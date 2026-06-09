@@ -84,7 +84,7 @@ func TestClaudeNonStreamRetriesNextAccountAfterPreResponseFailure(t *testing.T) 
 	defer kiroHttpStore.Store(oldClient)
 
 	p := accountpool.GetPool()
-	p.Reload()
+	p.ResetForTest()
 	h := &Handler{
 		pool:        p,
 		promptCache: newPromptCacheTracker(defaultPromptCacheTTL),
