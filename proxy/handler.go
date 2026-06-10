@@ -1274,6 +1274,7 @@ func (h *Handler) handleClaudeStream(w http.ResponseWriter, payload *KiroPayload
 	}
 
 	h.recordFailure()
+	logger.Errorf("[ClaudeStream] request for model %s failed after %d attempt(s): %v", model, maxAccountRetryAttempts, lastErr)
 	h.sendClaudeError(w, 500, "api_error", lastErr.Error())
 }
 
@@ -1471,6 +1472,7 @@ func (h *Handler) handleClaudeNonStream(w http.ResponseWriter, payload *KiroPayl
 	}
 
 	h.recordFailure()
+	logger.Errorf("[ClaudeNonStream] request for model %s failed after %d attempt(s): %v", model, maxAccountRetryAttempts, lastErr)
 	h.sendClaudeError(w, 500, "api_error", lastErr.Error())
 }
 
@@ -1915,6 +1917,7 @@ func (h *Handler) handleOpenAIStream(w http.ResponseWriter, payload *KiroPayload
 	}
 
 	h.recordFailure()
+	logger.Errorf("[OpenAIStream] request for model %s failed after %d attempt(s): %v", model, maxAccountRetryAttempts, lastErr)
 	h.sendOpenAIError(w, 500, "server_error", lastErr.Error())
 }
 
@@ -2001,6 +2004,7 @@ func (h *Handler) handleOpenAINonStream(w http.ResponseWriter, payload *KiroPayl
 	}
 
 	h.recordFailure()
+	logger.Errorf("[OpenAINonStream] request for model %s failed after %d attempt(s): %v", model, maxAccountRetryAttempts, lastErr)
 	h.sendOpenAIError(w, 500, "server_error", lastErr.Error())
 }
 

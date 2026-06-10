@@ -386,6 +386,7 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 			lastErr = fmt.Errorf("HTTP %d from %s: %s", resp.StatusCode, ep.Name, string(errBody))
 			// Authentication errors and payment errors are not retried across endpoints.
 			if resp.StatusCode == 401 || resp.StatusCode == 403 || resp.StatusCode == 402 {
+				logger.Warnf("[KiroAPI] Endpoint %s returned %d (not retried): %v", ep.Name, resp.StatusCode, lastErr)
 				return lastErr
 			}
 			logger.Warnf("[KiroAPI] Endpoint %s error: %v", ep.Name, lastErr)
@@ -394,6 +395,9 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 
 		err = parseEventStream(resp.Body, callback)
 		resp.Body.Close()
+		if err != nil {
+			logger.Warnf("[KiroAPI] Endpoint %s stream parse failed: %v", ep.Name, err)
+		}
 		return err
 	}
 

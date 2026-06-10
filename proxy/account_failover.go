@@ -120,6 +120,7 @@ func (h *Handler) handleAccountFailure(account *config.Account, err error) {
 	}
 
 	errMsg := err.Error()
+	logger.Warnf("[AccountFailover] Account %s request failed: %v", account.Email, err)
 	switch {
 	case isOverageErrorMessage(errMsg):
 		h.disableAccountOverage(account)
