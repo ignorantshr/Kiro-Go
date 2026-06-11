@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 )
@@ -274,6 +275,51 @@ func TestParseEventStreamActivityKeepsWatchdogAlive(t *testing.T) {
 	time.Sleep(25 * time.Millisecond)
 	if watchdog.TimedOut() {
 		t.Fatal("expected activity to keep watchdog alive")
+	}
+}
+
+func TestFormatPayloadForErrorLogRedactsContentOnly(t *testing.T) {
+	payload := &KiroPayload{}
+	payload.ConversationState.ConversationID = "conv-1"
+	payload.ConversationState.CurrentMessage.UserInputMessage = KiroUserInputMessage{
+		Content: "top secret prompt",
+		ModelID: "claude-sonnet-4.5",
+		Origin:  "AI_EDITOR",
+		UserInputMessageContext: &UserInputMessageContext{
+			ToolResults: []KiroToolResult{{
+				ToolUseID: "toolu_1",
+				Status:    "success",
+				Content: []KiroResultContent{{
+					Text: "tool result text",
+				}},
+			}},
+		},
+	}
+	payload.ConversationState.History = []KiroHistoryMessage{{
+		AssistantResponseMessage: &KiroAssistantResponseMessage{
+			Content: "assistant history text",
+		},
+	}}
+	payload.ProfileArn = "arn:aws:codewhisperer:profile/test"
+
+	formatted := formatPayloadForErrorLog(payload)
+	if strings.Contains(formatted, "top secret prompt") {
+		t.Fatalf("expected current message content to be redacted, got %s", formatted)
+	}
+	if strings.Contains(formatted, "assistant history text") {
+		t.Fatalf("expected history content to be redacted, got %s", formatted)
+	}
+	if strings.Contains(formatted, "tool result text") {
+		t.Fatalf("expected nested tool result content to be redacted, got %s", formatted)
+	}
+	if !strings.Contains(formatted, "claude-sonnet-4.5") {
+		t.Fatalf("expected non-content fields to be preserved, got %s", formatted)
+	}
+	if !strings.Contains(formatted, "arn:aws:codewhisperer:profile/test") {
+		t.Fatalf("expected profile ARN to be preserved, got %s", formatted)
+	}
+	if !strings.Contains(formatted, "*** redacted content len=") {
+		t.Fatalf("expected redaction markers, got %s", formatted)
 	}
 }
 

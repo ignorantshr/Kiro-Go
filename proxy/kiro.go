@@ -494,6 +494,9 @@ func CallKiroAPI(ctx context.Context, account *config.Account, payload *KiroPayl
 			resp.Body.Close()
 			watchdog.Stop()
 			lastErr = fmt.Errorf("HTTP %d from %s: %s", resp.StatusCode, ep.Name, string(errBody))
+			if resp.StatusCode == 400 {
+				logger.Warnf("[KiroAPI] Endpoint %s sanitized payload: %s", ep.Name, formatPayloadForErrorLog(payload))
+			}
 			// Authentication errors and payment errors are not retried across endpoints.
 			if resp.StatusCode == 401 || resp.StatusCode == 403 || resp.StatusCode == 402 {
 				logger.Warnf("[KiroAPI] Endpoint %s returned %d (not retried): %v", ep.Name, resp.StatusCode, lastErr)
