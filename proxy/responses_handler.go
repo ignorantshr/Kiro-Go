@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -120,12 +121,12 @@ func (h *Handler) handleOpenAIResponses(w http.ResponseWriter, r *http.Request) 
 	respID := generateResponseID()
 
 	if req.Stream {
-		h.handleResponsesStream(w, kiroPayload, actualModel, thinking, estimatedInputTokens,
+		h.handleResponsesStream(r.Context(), w, kiroPayload, actualModel, thinking, estimatedInputTokens,
 			apiKeyEntry, respID, &req, storedInputCopy, storeResponse)
 		return
 	}
 
-	h.handleResponsesNonStream(w, kiroPayload, actualModel, thinking, estimatedInputTokens,
+	h.handleResponsesNonStream(r.Context(), w, kiroPayload, actualModel, thinking, estimatedInputTokens,
 		apiKeyEntry, respID, &req, storedInputCopy, storeResponse)
 }
 
@@ -133,7 +134,7 @@ func (h *Handler) handleOpenAIResponses(w http.ResponseWriter, r *http.Request) 
 // response, then writes a single JSON ResponsesObject. Token counts prefer the
 // upstream-reported context usage, falling back to the request estimate.
 func (h *Handler) handleResponsesNonStream(
-	w http.ResponseWriter, payload *KiroPayload, model string, thinking bool,
+	ctx context.Context, w http.ResponseWriter, payload *KiroPayload, model string, thinking bool,
 	estimatedInputTokens int, apiKeyEntry *config.ApiKeyEntry, respID string,
 	req *ResponsesRequest, storedInput json.RawMessage, storeResponse bool,
 ) {
@@ -178,8 +179,11 @@ func (h *Handler) handleResponsesNonStream(
 			},
 		}
 
-		err := CallKiroAPI(account, payload, callback)
+		err := CallKiroAPI(ctx, account, payload, callback)
 		if err != nil {
+			if isUpstreamRequestCanceled(err) {
+				return
+			}
 			lastErr = err
 			excluded[account.ID] = true
 			h.handleAccountFailure(account, err)
@@ -291,7 +295,7 @@ func buildResponsesObject(
 // next account; once streaming has started, a mid-stream error becomes a
 // response.failed event since the partial output can't be retracted.
 func (h *Handler) handleResponsesStream(
-	w http.ResponseWriter, payload *KiroPayload, model string, thinking bool,
+	ctx context.Context, w http.ResponseWriter, payload *KiroPayload, model string, thinking bool,
 	estimatedInputTokens int, apiKeyEntry *config.ApiKeyEntry, respID string,
 	req *ResponsesRequest, storedInput json.RawMessage, storeResponse bool,
 ) {
@@ -492,8 +496,11 @@ func (h *Handler) handleResponsesStream(
 			},
 		}
 
-		err := CallKiroAPI(account, payload, callback)
+		err := CallKiroAPI(ctx, account, payload, callback)
 		if err != nil {
+			if isUpstreamRequestCanceled(err) {
+				return
+			}
 			if !responseStarted {
 				lastErr = err
 				excluded[account.ID] = true

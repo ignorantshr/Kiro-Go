@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
 	"kiro-go/config"
 	accountpool "kiro-go/pool"
@@ -80,7 +81,7 @@ func TestClaudeNonStreamRetriesNextAccountAfterPreResponseFailure(t *testing.T) 
 	defer func() { kiroEndpoints = oldEndpoints }()
 
 	oldClient := kiroHttpStore.Load()
-	kiroHttpStore.Store(&http.Client{Timeout: time.Second, Transport: &http.Transport{}})
+	kiroHttpStore.Store(&http.Client{Timeout: 0, Transport: &http.Transport{}})
 	defer kiroHttpStore.Store(oldClient)
 
 	p := accountpool.GetPool()
@@ -98,7 +99,7 @@ func TestClaudeNonStreamRetriesNextAccountAfterPreResponseFailure(t *testing.T) 
 	}
 
 	rec := httptest.NewRecorder()
-	h.handleClaudeNonStream(rec, payload, "claude-sonnet-4.5", false, claudeThinkingResponseOptions{}, 1, nil, nil)
+	h.handleClaudeNonStream(context.Background(), rec, payload, "claude-sonnet-4.5", false, claudeThinkingResponseOptions{}, 1, nil, nil)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected retry to succeed, status=%d body=%s", rec.Code, rec.Body.String())
@@ -120,6 +121,102 @@ func TestClaudeNonStreamRetriesNextAccountAfterPreResponseFailure(t *testing.T) 
 	}
 	if len(resp.Content) == 0 || resp.Content[0].Text != "retried successfully" {
 		t.Fatalf("expected retried response content, got %#v", resp.Content)
+	}
+}
+
+func TestClaudeNonStreamCanceledContextDoesNotRetryOrRecordAccountFailure(t *testing.T) {
+	cfgFile := t.TempDir() + "/config.json"
+	if err := config.Init(cfgFile); err != nil {
+		t.Fatalf("config.Init: %v", err)
+	}
+
+	if err := config.AddAccount(config.Account{
+		ID:          "first",
+		Enabled:     true,
+		AccessToken: "token-first",
+		ProfileArn:  "arn:aws:codewhisperer:profile/first",
+	}); err != nil {
+		t.Fatalf("add first account: %v", err)
+	}
+	if err := config.AddAccount(config.Account{
+		ID:          "second",
+		Enabled:     true,
+		AccessToken: "token-second",
+		ProfileArn:  "arn:aws:codewhisperer:profile/second",
+	}); err != nil {
+		t.Fatalf("add second account: %v", err)
+	}
+	if err := config.UpdatePreferredEndpoint("kiro"); err != nil {
+		t.Fatalf("set preferred endpoint: %v", err)
+	}
+	if err := config.UpdateEndpointFallback(false); err != nil {
+		t.Fatalf("disable endpoint fallback: %v", err)
+	}
+
+	requestTokens := make([]string, 0, 1)
+	requestStarted := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestTokens = append(requestTokens, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+		select {
+		case requestStarted <- struct{}{}:
+		default:
+		}
+		select {
+		case <-r.Context().Done():
+		case <-time.After(100 * time.Millisecond):
+		}
+	}))
+	defer server.Close()
+
+	oldEndpoints := kiroEndpoints
+	kiroEndpoints = []kiroEndpoint{{
+		URL:    server.URL,
+		Origin: "AI_EDITOR",
+		Name:   "test",
+	}}
+	defer func() { kiroEndpoints = oldEndpoints }()
+
+	oldClient := kiroHttpStore.Load()
+	kiroHttpStore.Store(&http.Client{Timeout: 0, Transport: &http.Transport{}})
+	defer kiroHttpStore.Store(oldClient)
+
+	p := accountpool.GetPool()
+	p.ResetForTest()
+	h := &Handler{
+		pool:        p,
+		promptCache: newPromptCacheTracker(defaultPromptCacheTTL),
+	}
+
+	payload := &KiroPayload{}
+	payload.ConversationState.CurrentMessage.UserInputMessage = KiroUserInputMessage{
+		Content: "hello",
+		ModelID: "claude-sonnet-4.5",
+		Origin:  "AI_EDITOR",
+	}
+
+	rec := httptest.NewRecorder()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.handleClaudeNonStream(ctx, rec, payload, "claude-sonnet-4.5", false, claudeThinkingResponseOptions{}, 1, nil, nil)
+	}()
+
+	select {
+	case <-requestStarted:
+		cancel()
+	case <-time.After(time.Second):
+		t.Fatal("expected upstream request to start")
+	}
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("expected handler to exit after cancellation")
+	}
+
+	if len(requestTokens) != 1 {
+		t.Fatalf("expected canceled request not to retry across accounts, got %v", requestTokens)
 	}
 }
 

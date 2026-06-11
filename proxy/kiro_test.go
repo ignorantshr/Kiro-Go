@@ -2,10 +2,13 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"kiro-go/config"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"testing"
 	"time"
@@ -54,14 +57,14 @@ func TestParseEventStreamFinishesPendingToolUseOnEOF(t *testing.T) {
 
 	var toolUses []KiroToolUse
 	var completed bool
-	err := parseEventStream(stream, &KiroStreamCallback{
+	err := parseEventStream(context.Background(), stream, &KiroStreamCallback{
 		OnToolUse: func(toolUse KiroToolUse) {
 			toolUses = append(toolUses, toolUse)
 		},
 		OnComplete: func(_, _ int) {
 			completed = true
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("unexpected parse error: %v", err)
 	}
@@ -92,7 +95,7 @@ func TestParseEventStreamNilCallbackIsNoOp(t *testing.T) {
 		}),
 	}, nil))
 
-	if err := parseEventStream(stream, nil); err != nil {
+	if err := parseEventStream(context.Background(), stream, nil, nil); err != nil {
 		t.Fatalf("expected nil callback to be a no-op, got %v", err)
 	}
 }
@@ -102,7 +105,7 @@ func TestParseEventStreamNilCallbackFieldsAreNoOp(t *testing.T) {
 		"content": "hello",
 	}))
 
-	if err := parseEventStream(stream, &KiroStreamCallback{}); err != nil {
+	if err := parseEventStream(context.Background(), stream, &KiroStreamCallback{}, nil); err != nil {
 		t.Fatalf("expected empty callback to be a no-op, got %v", err)
 	}
 }
@@ -199,11 +202,78 @@ func TestInitKiroHttpClientKeepsShortRestTimeout(t *testing.T) {
 	streamClient := kiroHttpStore.Load()
 	restClient := kiroRestHttpStore.Load()
 
-	if streamClient.Timeout != 5*time.Minute {
-		t.Fatalf("expected streaming timeout to be 5m, got %s", streamClient.Timeout)
+	if streamClient.Timeout != 0 {
+		t.Fatalf("expected streaming timeout to be disabled, got %s", streamClient.Timeout)
 	}
 	if restClient.Timeout != 30*time.Second {
 		t.Fatalf("expected REST timeout to stay 30s, got %s", restClient.Timeout)
+	}
+}
+
+func TestBuildKiroTransportSetsStreamingStageTimeouts(t *testing.T) {
+	transport := buildKiroTransport("")
+
+	if transport.TLSHandshakeTimeout != streamTLSHandshakeTimeout {
+		t.Fatalf("expected TLS timeout %s, got %s", streamTLSHandshakeTimeout, transport.TLSHandshakeTimeout)
+	}
+	if transport.ResponseHeaderTimeout != streamResponseHeaderTTL {
+		t.Fatalf("expected response header timeout %s, got %s", streamResponseHeaderTTL, transport.ResponseHeaderTimeout)
+	}
+}
+
+func TestParseEventStreamReturnsIdleTimeoutWhenWatchdogCancels(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	ctx, watchdog := newStreamIdleWatchdog(context.Background())
+	t.Cleanup(watchdog.Stop)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL, nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	resp, err := (&http.Client{Timeout: 0}).Do(req)
+	if err != nil {
+		t.Fatalf("do request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	watchdog.Start(20 * time.Millisecond)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- parseEventStream(ctx, resp.Body, &KiroStreamCallback{}, watchdog.OnActivity)
+	}()
+
+	select {
+	case err = <-errCh:
+		if !watchdog.TimedOut() {
+			t.Fatalf("expected watchdog to time out")
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected parse to stop on context cancellation, got %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected parseEventStream to exit after idle timeout")
+	}
+}
+
+func TestParseEventStreamActivityKeepsWatchdogAlive(t *testing.T) {
+	_, watchdog := newStreamIdleWatchdog(context.Background())
+	defer watchdog.Stop()
+	watchdog.Start(40 * time.Millisecond)
+
+	watchdog.OnActivity()
+	time.Sleep(25 * time.Millisecond)
+	watchdog.OnActivity()
+	time.Sleep(25 * time.Millisecond)
+	if watchdog.TimedOut() {
+		t.Fatal("expected activity to keep watchdog alive")
 	}
 }
 

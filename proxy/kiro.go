@@ -4,11 +4,14 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"kiro-go/config"
 	"kiro-go/logger"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -57,6 +60,15 @@ var kiroRestHttpStore atomic.Pointer[http.Client]
 // proxyClientCache caches http.Client instances keyed by proxy URL for per-account proxy support.
 var proxyClientCache sync.Map
 
+const (
+	streamIdleTimeout         = 5 * time.Minute
+	streamDialTimeout         = 10 * time.Second
+	streamTLSHandshakeTimeout = 10 * time.Second
+	streamResponseHeaderTTL   = 45 * time.Second
+)
+
+var ErrStreamIdleTimeout = errors.New("stream idle timeout")
+
 func init() {
 	InitKiroHttpClient("")
 }
@@ -71,7 +83,7 @@ func GetClientForProxy(proxyURL string) *http.Client {
 		return cached.(*http.Client)
 	}
 	client := &http.Client{
-		Timeout:   5 * time.Minute,
+		Timeout:   0,
 		Transport: buildKiroTransport(proxyURL),
 	}
 	proxyClientCache.Store(proxyURL, client)
@@ -107,12 +119,19 @@ func ResolveAccountProxyURL(account *config.Account) string {
 
 // buildKiroTransport constructs an HTTP Transport with optional outbound proxy support.
 func buildKiroTransport(proxyURL string) *http.Transport {
+	dialer := &net.Dialer{
+		Timeout:   streamDialTimeout,
+		KeepAlive: 30 * time.Second,
+	}
 	t := &http.Transport{
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 20,
-		IdleConnTimeout:     90 * time.Second,
-		DisableCompression:  false,
-		ForceAttemptHTTP2:   true,
+		DialContext:           dialer.DialContext,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   20,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   streamTLSHandshakeTimeout,
+		ResponseHeaderTimeout: streamResponseHeaderTTL,
+		DisableCompression:    false,
+		ForceAttemptHTTP2:     true,
 	}
 	if proxyURL != "" {
 		if u, err := url.Parse(proxyURL); err == nil {
@@ -129,7 +148,7 @@ func buildKiroTransport(proxyURL string) *http.Transport {
 // InitKiroHttpClient initializes (or reinitializes) the HTTP clients used for Kiro API requests.
 func InitKiroHttpClient(proxyURL string) {
 	client := &http.Client{
-		Timeout:   5 * time.Minute,
+		Timeout:   0,
 		Transport: buildKiroTransport(proxyURL),
 	}
 	kiroHttpStore.Store(client)
@@ -243,6 +262,10 @@ type KiroStreamCallback struct {
 
 // ==================== API Call ====================
 
+func isUpstreamRequestCanceled(err error) bool {
+	return errors.Is(err, context.Canceled)
+}
+
 func setPayloadProfileArnForAccount(payload *KiroPayload, account *config.Account) {
 	if payload == nil {
 		return
@@ -288,8 +311,86 @@ func getSortedEndpoints(preferred string) []kiroEndpoint {
 	return result
 }
 
+type streamIdleWatchdog struct {
+	ctx        context.Context
+	cancel     context.CancelFunc
+	activityCh chan struct{}
+	done       chan struct{}
+	timedOut   atomic.Bool
+	started    atomic.Bool
+}
+
+func newStreamIdleWatchdog(parent context.Context) (context.Context, *streamIdleWatchdog) {
+	ctx, cancel := context.WithCancel(parent)
+	watchdog := &streamIdleWatchdog{
+		ctx:        ctx,
+		cancel:     cancel,
+		activityCh: make(chan struct{}, 1),
+	}
+	return ctx, watchdog
+}
+
+func (w *streamIdleWatchdog) Start(timeout time.Duration) {
+	if w == nil || !w.started.CompareAndSwap(false, true) {
+		return
+	}
+	w.done = make(chan struct{})
+
+	go func() {
+		timer := time.NewTimer(timeout)
+		defer close(w.done)
+		defer timer.Stop()
+
+		for {
+			select {
+			case <-w.ctx.Done():
+				return
+			case <-w.activityCh:
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(timeout)
+			case <-timer.C:
+				w.timedOut.Store(true)
+				w.cancel()
+				return
+			}
+		}
+	}()
+}
+
+func (w *streamIdleWatchdog) OnActivity() {
+	if w == nil {
+		return
+	}
+	select {
+	case w.activityCh <- struct{}{}:
+	default:
+	}
+}
+
+func (w *streamIdleWatchdog) Stop() {
+	if w == nil {
+		return
+	}
+	w.cancel()
+	if w.started.Load() {
+		<-w.done
+	}
+}
+
+func (w *streamIdleWatchdog) TimedOut() bool {
+	return w != nil && w.timedOut.Load()
+}
+
 // CallKiroAPI calls the Kiro streaming API, trying each configured endpoint with automatic fallback.
-func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroStreamCallback) error {
+func CallKiroAPI(ctx context.Context, account *config.Account, payload *KiroPayload, callback *KiroStreamCallback) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	originalProfileArn := ""
 	if payload != nil {
 		originalProfileArn = payload.ProfileArn
@@ -342,9 +443,12 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 		// Update the origin field for the selected endpoint.
 		payload.ConversationState.CurrentMessage.UserInputMessage.Origin = ep.Origin
 
+		streamCtx, watchdog := newStreamIdleWatchdog(ctx)
+
 		reqBody, _ := json.Marshal(payload)
-		req, err := http.NewRequest("POST", ep.URL, bytes.NewReader(reqBody))
+		req, err := http.NewRequestWithContext(streamCtx, "POST", ep.URL, bytes.NewReader(reqBody))
 		if err != nil {
+			watchdog.Stop()
 			lastErr = err
 			continue
 		}
@@ -368,6 +472,10 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 
 		resp, err := GetClientForProxy(ResolveAccountProxyURL(account)).Do(req)
 		if err != nil {
+			watchdog.Stop()
+			if isUpstreamRequestCanceled(err) {
+				return err
+			}
 			lastErr = err
 			logger.Warnf("[KiroAPI] Endpoint %s failed: %v", ep.Name, err)
 			continue
@@ -375,6 +483,7 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 
 		if resp.StatusCode == 429 {
 			resp.Body.Close()
+			watchdog.Stop()
 			logger.Warnf("[KiroAPI] Endpoint %s quota exhausted (429), trying next...", ep.Name)
 			lastErr = fmt.Errorf("quota exhausted on %s", ep.Name)
 			continue
@@ -383,6 +492,7 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 		if resp.StatusCode != 200 {
 			errBody, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
+			watchdog.Stop()
 			lastErr = fmt.Errorf("HTTP %d from %s: %s", resp.StatusCode, ep.Name, string(errBody))
 			// Authentication errors and payment errors are not retried across endpoints.
 			if resp.StatusCode == 401 || resp.StatusCode == 403 || resp.StatusCode == 402 {
@@ -393,10 +503,22 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 			continue
 		}
 
-		err = parseEventStream(resp.Body, callback)
+		watchdog.Start(streamIdleTimeout)
+		err = parseEventStream(streamCtx, resp.Body, callback, watchdog.OnActivity)
+		if err != nil && watchdog.TimedOut() && isUpstreamRequestCanceled(err) {
+			err = ErrStreamIdleTimeout
+		}
+		watchdog.Stop()
 		resp.Body.Close()
 		if err != nil {
-			logger.Warnf("[KiroAPI] Endpoint %s stream parse failed: %v", ep.Name, err)
+			switch {
+			case isUpstreamRequestCanceled(err):
+				logger.Debugf("[KiroAPI] Endpoint %s request canceled: %v", ep.Name, err)
+			case errors.Is(err, ErrStreamIdleTimeout):
+				logger.Warnf("[KiroAPI] Endpoint %s stream idle timeout after %s", ep.Name, streamIdleTimeout)
+			default:
+				logger.Warnf("[KiroAPI] Endpoint %s stream parse failed: %v", ep.Name, err)
+			}
 		}
 		return err
 	}
@@ -410,9 +532,12 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 // ==================== Event Stream Parsing ====================
 
 // parseEventStream decodes an AWS binary Event Stream response body.
-func parseEventStream(body io.Reader, callback *KiroStreamCallback) error {
+func parseEventStream(ctx context.Context, body io.Reader, callback *KiroStreamCallback, onActivity func()) error {
 	if callback == nil {
 		callback = &KiroStreamCallback{}
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	// Read directly without bufio to avoid buffering latency in streaming responses.
@@ -430,6 +555,9 @@ func parseEventStream(body io.Reader, callback *KiroStreamCallback) error {
 			break
 		}
 		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			return err
 		}
 
@@ -445,6 +573,9 @@ func parseEventStream(body io.Reader, callback *KiroStreamCallback) error {
 		msgBuf := make([]byte, remaining)
 		_, err = io.ReadFull(body, msgBuf)
 		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			return err
 		}
 
@@ -461,6 +592,9 @@ func parseEventStream(body io.Reader, callback *KiroStreamCallback) error {
 		var event map[string]interface{}
 		if err := json.Unmarshal(payloadBytes, &event); err != nil {
 			continue
+		}
+		if onActivity != nil {
+			onActivity()
 		}
 
 		inputTokens, outputTokens = updateTokensFromEvent(event, inputTokens, outputTokens)
