@@ -1,6 +1,10 @@
 package proxy
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"testing"
+)
 
 func TestAccountFailureClassifiers(t *testing.T) {
 	tests := []struct {
@@ -19,5 +23,32 @@ func TestAccountFailureClassifiers(t *testing.T) {
 		if !tc.fn(tc.msg) {
 			t.Fatalf("%s classifier did not match %q", tc.name, tc.msg)
 		}
+	}
+}
+
+type timeoutTestErr struct{}
+
+func (timeoutTestErr) Error() string   { return "timeout awaiting response headers" }
+func (timeoutTestErr) Timeout() bool   { return true }
+func (timeoutTestErr) Temporary() bool { return true }
+
+func TestShouldPenalizeAccountForError(t *testing.T) {
+	if shouldPenalizeAccountForError(nil) {
+		t.Fatal("nil error should not penalize")
+	}
+	if shouldPenalizeAccountForError(context.Canceled) {
+		t.Fatal("context cancellation should not penalize")
+	}
+	if !shouldPenalizeAccountForError(ErrStreamIdleTimeout) {
+		t.Fatal("stream idle timeout should still penalize")
+	}
+	if !shouldPenalizeAccountForError(context.DeadlineExceeded) {
+		t.Fatal("deadline exceeded should still penalize")
+	}
+	if !shouldPenalizeAccountForError(timeoutTestErr{}) {
+		t.Fatal("transport timeout should still penalize")
+	}
+	if !shouldPenalizeAccountForError(errors.New("HTTP 500 upstream failure")) {
+		t.Fatal("generic upstream failure should penalize")
 	}
 }

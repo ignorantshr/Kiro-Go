@@ -61,6 +61,13 @@ func isAuthErrorMessage(msg string) bool {
 		strings.Contains(msg, "refresh token expired")
 }
 
+func shouldPenalizeAccountForError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return !isUpstreamRequestCanceled(err)
+}
+
 // disableAccount marks an account disabled with a ban status/reason, persists the
 // change, and reloads the pool so it stops being selected. No-op if the account is
 // already in the same disabled state.
@@ -116,6 +123,10 @@ func (h *Handler) disableAccountOverage(account *config.Account) {
 // calls after a failed CallKiroAPI.
 func (h *Handler) handleAccountFailure(account *config.Account, err error) {
 	if account == nil || err == nil {
+		return
+	}
+	if !shouldPenalizeAccountForError(err) {
+		logger.Warnf("[AccountFailover] Skip penalty for %s: %v", account.Email, err)
 		return
 	}
 

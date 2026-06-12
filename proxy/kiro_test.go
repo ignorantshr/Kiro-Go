@@ -209,6 +209,16 @@ func TestInitKiroHttpClientKeepsShortRestTimeout(t *testing.T) {
 	if restClient.Timeout != 30*time.Second {
 		t.Fatalf("expected REST timeout to stay 30s, got %s", restClient.Timeout)
 	}
+	restTransport, ok := restClient.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected REST transport to be *http.Transport, got %T", restClient.Transport)
+	}
+	if restTransport.ResponseHeaderTimeout != 0 {
+		t.Fatalf("expected REST transport not to inherit response header timeout, got %s", restTransport.ResponseHeaderTimeout)
+	}
+	if restTransport.TLSHandshakeTimeout != 0 {
+		t.Fatalf("expected REST transport not to inherit TLS handshake timeout, got %s", restTransport.TLSHandshakeTimeout)
+	}
 }
 
 func TestBuildKiroTransportSetsStreamingStageTimeouts(t *testing.T) {

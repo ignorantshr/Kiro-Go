@@ -102,7 +102,7 @@ func GetRestClientForProxy(proxyURL string) *http.Client {
 	}
 	client := &http.Client{
 		Timeout:   30 * time.Second,
-		Transport: buildKiroTransport(proxyURL),
+		Transport: buildKiroRestTransport(proxyURL),
 	}
 	proxyClientCache.Store(cacheKey, client)
 	return client
@@ -119,19 +119,28 @@ func ResolveAccountProxyURL(account *config.Account) string {
 
 // buildKiroTransport constructs an HTTP Transport with optional outbound proxy support.
 func buildKiroTransport(proxyURL string) *http.Transport {
+	t := buildBaseKiroTransport(proxyURL)
+	t.TLSHandshakeTimeout = streamTLSHandshakeTimeout
+	t.ResponseHeaderTimeout = streamResponseHeaderTTL
+	return t
+}
+
+func buildKiroRestTransport(proxyURL string) *http.Transport {
+	return buildBaseKiroTransport(proxyURL)
+}
+
+func buildBaseKiroTransport(proxyURL string) *http.Transport {
 	dialer := &net.Dialer{
 		Timeout:   streamDialTimeout,
 		KeepAlive: 30 * time.Second,
 	}
 	t := &http.Transport{
-		DialContext:           dialer.DialContext,
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   20,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   streamTLSHandshakeTimeout,
-		ResponseHeaderTimeout: streamResponseHeaderTTL,
-		DisableCompression:    false,
-		ForceAttemptHTTP2:     true,
+		DialContext:         dialer.DialContext,
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 20,
+		IdleConnTimeout:     90 * time.Second,
+		DisableCompression:  false,
+		ForceAttemptHTTP2:   true,
 	}
 	if proxyURL != "" {
 		if u, err := url.Parse(proxyURL); err == nil {
@@ -155,7 +164,7 @@ func InitKiroHttpClient(proxyURL string) {
 
 	restClient := &http.Client{
 		Timeout:   30 * time.Second,
-		Transport: buildKiroTransport(proxyURL),
+		Transport: buildKiroRestTransport(proxyURL),
 	}
 	kiroRestHttpStore.Store(restClient)
 }
@@ -508,7 +517,7 @@ func CallKiroAPI(ctx context.Context, account *config.Account, payload *KiroPayl
 
 		watchdog.Start(streamIdleTimeout)
 		err = parseEventStream(streamCtx, resp.Body, callback, watchdog.OnActivity)
-		if err != nil && watchdog.TimedOut() && isUpstreamRequestCanceled(err) {
+		if err != nil && watchdog.TimedOut() && ctx.Err() == nil && isUpstreamRequestCanceled(err) {
 			err = ErrStreamIdleTimeout
 		}
 		watchdog.Stop()

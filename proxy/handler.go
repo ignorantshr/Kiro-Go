@@ -20,6 +20,7 @@ import (
 )
 
 const tokenRefreshSkewSeconds int64 = 120
+const adminAccountTestTimeout = 60 * time.Second
 
 // Handler HTTP 处理器
 type Handler struct {
@@ -3100,7 +3101,10 @@ func (h *Handler) apiTestAccount(w http.ResponseWriter, r *http.Request, id stri
 		OnContextUsage: func(pct float64) {},
 	}
 
-	err := CallKiroAPI(r.Context(), account, kiroPayload, callback)
+	testCtx, cancel := context.WithTimeout(r.Context(), adminAccountTestTimeout)
+	defer cancel()
+
+	err := CallKiroAPI(testCtx, account, kiroPayload, callback)
 	if err != nil {
 		w.WriteHeader(500)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
