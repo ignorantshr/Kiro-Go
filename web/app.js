@@ -129,6 +129,8 @@
     renderVersionBadge();
     renderAccounts();
     renderPromptRules();
+    renderApiKeys();
+    if ($('apiKeyModal') && $('apiKeyModal').classList.contains('active')) renderApiKeyBoundAccountsUI();
   }
   function updateLangButtons() {
     qsa('.lang-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.lang === currentLang));
@@ -266,7 +268,7 @@
     content.setAttribute('aria-labelledby', trigger.id);
   }
   function enhanceCustomSelect(select) {
-    if (!select || select.__customSelect || select.dataset.nativeSelect === 'true') return;
+    if (!select || select.__customSelect || select.dataset.nativeSelect === 'true' || select.multiple) return;
 
     const id = select.id || 'custom-select-' + (++customSelectUid);
     if (!select.id) select.id = id;
@@ -1563,6 +1565,9 @@
   let apiKeysCache = [];
   let apiKeyEditingId = '';
   let apiKeyModalSubmitting = false;
+  let apiKeyBoundAccountIds = [];
+  let apiKeyBoundAccountSearch = '';
+  let apiKeyStrictBindingPreference = false;
 
   async function loadApiKeys() {
     const list = $('apiKeysList');
@@ -1604,6 +1609,141 @@
       return '<div class="text-xs muted-text">' + escapeHtml(label) + ': ' + escapeHtml(fmt(used)) + ' / ' + escapeHtml(t('apiKeys.unlimited')) + '</div>';
     }
     return '<div class="text-xs muted-text">' + escapeHtml(label) + ': ' + escapeHtml(fmt(used)) + ' / ' + escapeHtml(fmt(limit)) + '</div>' + usageBar(used, limit);
+  }
+
+  function getApiKeyBindingAccounts() {
+    return Array.isArray(window._accountsCache) ? window._accountsCache : [];
+  }
+
+  function getApiKeyBindingLabel(acc) {
+    return (acc && (acc.nickname || acc.email || acc.id) || '').trim();
+  }
+
+  function normalizeApiKeyBoundAccountIds(ids) {
+    const valid = new Set(getApiKeyBindingAccounts().map(acc => acc.id));
+    const seen = new Set();
+    const out = [];
+    (ids || []).forEach(id => {
+      id = String(id || '').trim();
+      if (!id || seen.has(id) || !valid.has(id)) return;
+      seen.add(id);
+      out.push(id);
+    });
+    return out;
+  }
+
+  function updateApiKeyStrictBindingState() {
+    const strictEl = $('apiKeyForm_strictBinding');
+    if (!strictEl) return;
+    const hasBoundAccounts = apiKeyBoundAccountIds.length > 0;
+    if (!hasBoundAccounts) {
+      apiKeyStrictBindingPreference = !!strictEl.checked;
+      strictEl.checked = false;
+      strictEl.disabled = true;
+      return;
+    }
+    strictEl.disabled = false;
+    strictEl.checked = !!apiKeyStrictBindingPreference;
+  }
+
+  function syncApiKeyBoundAccountsSelect() {
+    const selectEl = $('apiKeyForm_boundAccounts');
+    if (!selectEl) return;
+    const accounts = getApiKeyBindingAccounts();
+    const selectedSet = new Set(apiKeyBoundAccountIds);
+    selectEl.innerHTML = '';
+
+    function appendOption(acc, selected) {
+      const opt = document.createElement('option');
+      opt.value = acc.id;
+      opt.textContent = getApiKeyBindingLabel(acc);
+      opt.selected = selected;
+      selectEl.appendChild(opt);
+    }
+
+    apiKeyBoundAccountIds.forEach(id => {
+      const acc = accounts.find(item => item.id === id);
+      if (acc) appendOption(acc, true);
+    });
+    accounts.forEach(acc => {
+      if (!selectedSet.has(acc.id)) appendOption(acc, false);
+    });
+    updateApiKeyStrictBindingState();
+  }
+
+  function renderApiKeyBoundAccountsUI() {
+    const selectedEl = $('apiKeyForm_boundAccountsSelected');
+    const listEl = $('apiKeyForm_boundAccountsList');
+    const clearBtn = $('apiKeyForm_clearBoundAccounts');
+    const searchEl = $('apiKeyForm_boundAccountsSearch');
+    if (!selectedEl || !listEl || !clearBtn || !searchEl) return;
+
+    const accounts = getApiKeyBindingAccounts();
+    const orderMap = new Map(apiKeyBoundAccountIds.map((id, index) => [id, index + 1]));
+    const query = apiKeyBoundAccountSearch.trim().toLowerCase();
+    const filtered = accounts.filter(acc => {
+      if (!query) return true;
+      return [acc.nickname, acc.email, acc.id].some(value => String(value || '').toLowerCase().includes(query));
+    });
+
+    clearBtn.disabled = apiKeyBoundAccountIds.length === 0;
+    searchEl.value = apiKeyBoundAccountSearch;
+
+    if (!apiKeyBoundAccountIds.length) {
+      selectedEl.innerHTML = '<div class="api-key-binding-empty muted-text">' + escapeHtml(t('apiKeys.boundAccountsNoneSelected')) + '</div>';
+    } else {
+      selectedEl.innerHTML = apiKeyBoundAccountIds.map((id, index) => {
+        const acc = accounts.find(item => item.id === id);
+        const label = acc ? getApiKeyBindingLabel(acc) : id;
+        return '<div class="api-key-binding-chip">' +
+          '<span class="api-key-binding-order">' + escapeHtml(String(index + 1)) + '</span>' +
+          '<span class="api-key-binding-chip-label">' + escapeHtml(label) + '</span>' +
+          '<button class="api-key-binding-chip-remove" type="button" data-remove-bound-account="' + escapeAttr(id) + '" aria-label="' + escapeAttr(t('apiKeys.boundAccountsRemove', label)) + '">&times;</button>' +
+        '</div>';
+      }).join('');
+    }
+
+    if (!accounts.length) {
+      listEl.innerHTML = '<div class="api-key-binding-empty muted-text">' + escapeHtml(t('apiKeys.boundAccountsEmpty')) + '</div>';
+      return;
+    }
+
+    if (!filtered.length) {
+      listEl.innerHTML = '<div class="api-key-binding-empty muted-text">' + escapeHtml(t('apiKeys.boundAccountsNoMatch')) + '</div>';
+      return;
+    }
+
+    listEl.innerHTML = filtered.map(acc => {
+      const label = getApiKeyBindingLabel(acc);
+      const metaParts = [];
+      if (acc.nickname && acc.email && acc.email !== acc.nickname) metaParts.push(acc.email);
+      if (acc.id && acc.id !== label && acc.id !== acc.email) metaParts.push(acc.id);
+      const selectedOrder = orderMap.get(acc.id);
+      return '<button class="api-key-binding-option' + (selectedOrder ? ' is-selected' : '') + '" type="button" data-bound-account-id="' + escapeAttr(acc.id) + '">' +
+        '<span class="api-key-binding-option-main">' +
+          '<span class="api-key-binding-option-title">' + escapeHtml(label) + '</span>' +
+          (metaParts.length ? '<span class="api-key-binding-option-meta">' + escapeHtml(metaParts.join(' · ')) + '</span>' : '') +
+        '</span>' +
+        '<span class="api-key-binding-option-trailing">' +
+          (selectedOrder
+            ? '<span class="api-key-binding-order">' + escapeHtml(String(selectedOrder)) + '</span>'
+            : '<span class="api-key-binding-option-add" aria-hidden="true">+</span>') +
+        '</span>' +
+      '</button>';
+    }).join('');
+  }
+
+  function refreshApiKeyBoundAccountsUI() {
+    apiKeyBoundAccountIds = normalizeApiKeyBoundAccountIds(apiKeyBoundAccountIds);
+    syncApiKeyBoundAccountsSelect();
+    renderApiKeyBoundAccountsUI();
+  }
+
+  function toggleApiKeyBoundAccount(id) {
+    const index = apiKeyBoundAccountIds.indexOf(id);
+    if (index >= 0) apiKeyBoundAccountIds.splice(index, 1);
+    else apiKeyBoundAccountIds.push(id);
+    refreshApiKeyBoundAccountsUI();
   }
 
   function renderApiKeys() {
@@ -1676,19 +1816,12 @@
     $('apiKeyForm_tokenLimit').value = entry ? String(entry.tokenLimit || 0) : '0';
     $('apiKeyForm_creditLimit').value = entry ? String(entry.creditLimit || 0) : '0';
 
-    // Populate bound accounts multi-select
-    const selectEl = $('apiKeyForm_boundAccounts');
-    selectEl.innerHTML = '';
-    const accounts = window._accountsCache || [];
-    const boundIds = (entry && entry.boundAccountIds) || [];
-    accounts.forEach(function(acc) {
-      const opt = document.createElement('option');
-      opt.value = acc.id;
-      opt.textContent = acc.nickname || acc.email || acc.id;
-      if (boundIds.indexOf(acc.id) >= 0) opt.selected = true;
-      selectEl.appendChild(opt);
-    });
-    $('apiKeyForm_strictBinding').checked = entry ? !!entry.strictBinding : false;
+    apiKeyBoundAccountSearch = '';
+    apiKeyBoundAccountIds = normalizeApiKeyBoundAccountIds((entry && entry.boundAccountIds) || []);
+    apiKeyStrictBindingPreference = entry ? !!entry.strictBinding : false;
+    $('apiKeyForm_boundAccountsSearch').value = '';
+    refreshApiKeyBoundAccountsUI();
+    updateApiKeyStrictBindingState();
 
     apiKeyModalSubmitting = false;
     $('apiKeyModalSaveBtn').disabled = false;
@@ -1699,6 +1832,9 @@
     closeDialog('apiKeyModal');
     apiKeyEditingId = '';
     apiKeyModalSubmitting = false;
+    apiKeyBoundAccountIds = [];
+    apiKeyBoundAccountSearch = '';
+    apiKeyStrictBindingPreference = false;
     $('apiKeyModalSaveBtn').disabled = false;
   }
 
@@ -1712,8 +1848,7 @@
       const enabled = $('apiKeyForm_enabled').checked;
       const tokenLimit = parseInt($('apiKeyForm_tokenLimit').value, 10);
       const creditLimit = parseFloat($('apiKeyForm_creditLimit').value);
-      const selectEl = $('apiKeyForm_boundAccounts');
-      const boundAccountIds = Array.from(selectEl.selectedOptions).map(function(o) { return o.value; });
+      const boundAccountIds = apiKeyBoundAccountIds.slice();
       const strictBinding = $('apiKeyForm_strictBinding').checked && boundAccountIds.length > 0;
       const payload = {
         name: name,
@@ -1848,6 +1983,43 @@
     }
     const addBtn = $('addApiKeyBtn');
     if (addBtn) addBtn.addEventListener('click', () => openApiKeyModal(null));
+    const strictBindingEl = $('apiKeyForm_strictBinding');
+    if (strictBindingEl) {
+      strictBindingEl.addEventListener('change', e => {
+        apiKeyStrictBindingPreference = !!e.target.checked;
+      });
+    }
+    const clearBoundBtn = $('apiKeyForm_clearBoundAccounts');
+    if (clearBoundBtn) {
+      clearBoundBtn.addEventListener('click', () => {
+        apiKeyBoundAccountIds = [];
+        refreshApiKeyBoundAccountsUI();
+      });
+    }
+    const boundSearch = $('apiKeyForm_boundAccountsSearch');
+    if (boundSearch) {
+      boundSearch.addEventListener('input', e => {
+        apiKeyBoundAccountSearch = e.target.value || '';
+        renderApiKeyBoundAccountsUI();
+      });
+    }
+    const boundSelected = $('apiKeyForm_boundAccountsSelected');
+    if (boundSelected) {
+      boundSelected.addEventListener('click', e => {
+        const btn = e.target.closest('[data-remove-bound-account]');
+        if (!btn) return;
+        apiKeyBoundAccountIds = apiKeyBoundAccountIds.filter(id => id !== btn.dataset.removeBoundAccount);
+        refreshApiKeyBoundAccountsUI();
+      });
+    }
+    const boundList = $('apiKeyForm_boundAccountsList');
+    if (boundList) {
+      boundList.addEventListener('click', e => {
+        const btn = e.target.closest('[data-bound-account-id]');
+        if (!btn) return;
+        toggleApiKeyBoundAccount(btn.dataset.boundAccountId);
+      });
+    }
     const saveBtn = $('apiKeyModalSaveBtn');
     if (saveBtn) saveBtn.addEventListener('click', submitApiKeyModal);
     const cancelBtn = $('apiKeyModalCancelBtn');

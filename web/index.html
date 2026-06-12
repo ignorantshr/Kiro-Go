@@ -611,7 +611,19 @@
         </div>
         <div class="form-group">
           <label data-i18n="apiKeys.boundAccounts"></label>
-          <select id="apiKeyForm_boundAccounts" multiple style="width:100%;min-height:80px;"></select>
+          <div class="api-key-binding-picker">
+            <div class="api-key-binding-toolbar">
+              <span class="text-xs muted-text" data-i18n="apiKeys.boundAccountsSelected"></span>
+              <button class="btn btn-ghost btn-xs" id="apiKeyForm_clearBoundAccounts" type="button" data-i18n="apiKeys.boundAccountsClear"></button>
+            </div>
+            <div id="apiKeyForm_boundAccountsSelected" class="api-key-binding-selected"></div>
+            <input type="search" id="apiKeyForm_boundAccountsSearch" data-i18n-placeholder="apiKeys.boundAccountsSearchPlaceholder" />
+            <div class="api-key-binding-toolbar">
+              <span class="text-xs muted-text" data-i18n="apiKeys.boundAccountsAvailable"></span>
+            </div>
+            <div id="apiKeyForm_boundAccountsList" class="api-key-binding-list" role="listbox" aria-multiselectable="true"></div>
+            <select id="apiKeyForm_boundAccounts" multiple data-native-select="true" hidden></select>
+          </div>
           <small data-i18n="apiKeys.boundAccountsHint"></small>
         </div>
         <div class="form-group">
