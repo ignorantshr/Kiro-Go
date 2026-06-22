@@ -469,19 +469,11 @@ func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
 		models = fallbackAnthropicModels(thinkingSuffix)
 	}
 
-	// 添加别名模型
-	models = append(models,
-		buildModelInfo("auto", "kiro-proxy", true),
-		buildModelInfo("gpt-4o", "kiro-proxy", true),
-		buildModelInfo("gpt-4", "kiro-proxy", true),
-	)
-
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"object": "list",
 		"data":   models,
 	})
-	return
 }
 
 func buildAnthropicModelsResponse(cached []ModelInfo, thinkingSuffix string) []map[string]interface{} {
