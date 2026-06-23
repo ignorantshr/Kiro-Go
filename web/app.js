@@ -416,7 +416,7 @@
   // Privacy and email mask
   function initPrivacyMode() {
     const saved = localStorage.getItem('privacyMode');
-    privacyModeEnabled = saved === null ? true : saved === 'true';
+    privacyModeEnabled = saved === null ? false : saved === 'true';
     const toggle = $('privacyModeToggle');
     if (toggle) toggle.checked = privacyModeEnabled;
   }
@@ -1756,7 +1756,7 @@
     const html = apiKeysCache.map(item => {
       const id = escapeAttr(item.id || '');
       const name = item.name ? escapeHtml(item.name) : '<span class="muted-text">' + escapeHtml(t('apiKeys.unnamed')) + '</span>';
-      const masked = escapeHtml(item.keyMasked || '');
+      const masked = escapeHtml(item.key || item.keyMasked || '');
       const migrated = item.migrated
         ? '<span class="text-xs" style="background:rgba(59,130,246,0.15);color:#3b82f6;padding:1px 6px;border-radius:4px;">' + escapeHtml(t('apiKeys.migrated')) + '</span>'
         : '';
@@ -1806,7 +1806,7 @@
     $('apiKeyForm_name').value = entry ? (entry.name || '') : '';
     const keyEl = $('apiKeyForm_key');
     if (apiKeyEditingId) {
-      keyEl.value = entry.keyMasked || '';
+      keyEl.value = entry.key || entry.keyMasked || '';
       keyEl.readOnly = true;
     } else {
       keyEl.value = '';

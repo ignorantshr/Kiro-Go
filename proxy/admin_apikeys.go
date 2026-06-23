@@ -6,11 +6,12 @@ import (
 	"net/http"
 )
 
-// apiKeyView is the response payload for listing/inspecting API keys. The Key field
-// is masked so admins can identify entries without exposing the secret.
+// apiKeyView is the response payload for listing/inspecting API keys. Key holds the
+// cleartext value and KeyMasked a display-friendly masked version.
 type apiKeyView struct {
 	ID              string   `json:"id"`
 	Name            string   `json:"name,omitempty"`
+	Key             string   `json:"key"`
 	KeyMasked       string   `json:"keyMasked"`
 	Enabled         bool     `json:"enabled"`
 	Migrated        bool     `json:"migrated,omitempty"`
@@ -33,6 +34,7 @@ func toApiKeyView(e config.ApiKeyEntry) apiKeyView {
 	return apiKeyView{
 		ID:              e.ID,
 		Name:            e.Name,
+		Key:             e.Key,
 		KeyMasked:       config.MaskApiKey(e.Key),
 		Enabled:         e.Enabled,
 		Migrated:        e.Migrated,

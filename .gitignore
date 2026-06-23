@@ -22,3 +22,5 @@ Thumbs.db
 # Local backups / scratch
 backup*/
 PR-*.md
+
+.mcp.json
