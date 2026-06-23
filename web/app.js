@@ -661,7 +661,7 @@
 
   // Data loaders
   async function loadData() {
-    await Promise.all([loadStats(), loadAccounts(), loadSettings(), loadVersion()]);
+    await Promise.all([loadStats(), loadAccounts(), loadSettings(), loadVersion(), loadApiKeys()]);
     renderEndpointCode('claudeEndpoint', baseUrl + '/v1/messages');
     renderEndpointCode('openaiEndpoint', baseUrl + '/v1/chat/completions');
     renderEndpointCode('openaiResponsesEndpoint', baseUrl + '/v1/responses');
@@ -831,6 +831,10 @@
       const weight = a.weight || 0;
       const weightBadge = weight >= 2 ? '<span class="badge badge-warning">' + escapeHtml(t('accounts.weightShort')) + ':' + weight + '</span>' : '';
       const overageBadge = renderOverageBadge(a);
+      const boundKeyCount = apiKeysBoundToAccount(a.id).length;
+      const boundKeyBadge = boundKeyCount > 0
+        ? '<span class="badge badge-success">' + escapeHtml(t('accounts.boundByN').replace('{n}', String(boundKeyCount))) + '</span>'
+        : '';
       const banned = a.banStatus && a.banStatus !== 'ACTIVE';
       const idAttr = escapeAttr(a.id);
       const displayEmail = getDisplayEmail(a.email, a.id);
@@ -854,6 +858,7 @@
         overageBadge +
         '<span class="badge badge-info">' + escapeHtml(formatAuthMethod(a.provider || a.authMethod)) + '</span>' +
         getStatusBadge(a) +
+        boundKeyBadge +
         '</div>' +
         '</div>' +
         '</div>' +
@@ -1032,6 +1037,21 @@
     updateBatchBar();
     loadAccounts(); loadStats();
   }
+  // Manual refresh of the accounts tab: reloads accounts, stats and API keys
+  // (the latter feeds the binding badges) with a brief spinner on the button.
+  async function refreshAccountsList(btn) {
+    const icon = btn ? btn.querySelector('i') : null;
+    if (icon) icon.classList.add('fa-spin');
+    if (btn) btn.disabled = true;
+    try {
+      await Promise.all([loadAccounts(), loadStats(), loadApiKeys()]);
+    } catch (e) {
+      // loaders surface their own errors; nothing extra to do here
+    } finally {
+      if (icon) icon.classList.remove('fa-spin');
+      if (btn) btn.disabled = false;
+    }
+  }
   async function refreshAllModels() {
     const ok = await confirmAction(t('models.confirmRefreshAll'), {
       title: t('models.refreshAll'),
@@ -1078,6 +1098,10 @@
       detailItem(t('detail.authMethod'), formatAuthMethod(a.provider || a.authMethod)) +
       detailItem(t('detail.region'), a.region || 'us-east-1') +
       '</div></div>' +
+
+      '<div class="detail-section"><h4>' + escapeHtml(t('detail.boundApiKeys')) + '</h4>' +
+      renderBoundApiKeysBlock(a.id) +
+      '</div>' +
 
       '<div class="detail-section"><h4>' + escapeHtml(t('detail.machineId')) + '</h4><div class="machine-id-row">' +
       '<input type="text" id="machineIdInput" value="' + escapeAttr(a.machineId || '') + '" placeholder="UUID" />' +
@@ -1578,10 +1602,39 @@
       const d = await res.json();
       apiKeysCache = Array.isArray(d.apiKeys) ? d.apiKeys : [];
       renderApiKeys();
+      renderAccounts();
     } catch (e) {
       apiKeysCache = [];
       list.innerHTML = '<div class="muted-text" style="padding:0.5rem 0;">' + escapeHtml(t('apiKeys.loadFailed')) + '</div>';
     }
+  }
+
+  // Reverse mapping: which API keys bind the given account id.
+  // Sorted by creditsUsed descending (heaviest consumers first).
+  function apiKeysBoundToAccount(accountId) {
+    return apiKeysCache
+      .filter(k => Array.isArray(k.boundAccountIds) && k.boundAccountIds.indexOf(accountId) !== -1)
+      .sort((a, b) => (b.creditsUsed || 0) - (a.creditsUsed || 0));
+  }
+
+  // Renders the "bound API keys" list for the account detail modal.
+  // Keys are sorted by credits used (descending), each row shows that figure.
+  function renderBoundApiKeysBlock(accountId) {
+    const keys = apiKeysBoundToAccount(accountId);
+    if (keys.length === 0) {
+      return '<div class="detail-value muted-text">' + escapeHtml(t('detail.boundApiKeysEmpty')) + '</div>';
+    }
+    return '<div class="bound-api-keys">' + keys.map(k => {
+      const label = k.name || k.keyMasked || k.id;
+      const strict = k.strictBinding
+        ? '<span class="badge badge-warning">' + escapeHtml(t('apiKeys.strict')) + '</span>'
+        : '';
+      const credits = (k.creditsUsed || 0).toFixed(2);
+      return '<div class="bound-api-key">' +
+        '<span class="bound-api-key-label"><span class="bound-api-key-name">' + escapeHtml(label) + '</span>' + strict + '</span>' +
+        '<span class="bound-api-key-credits">' + escapeHtml(t('detail.boundApiKeyCredits').replace('{c}', credits)) + '</span>' +
+        '</div>';
+    }).join('') + '</div>';
   }
 
   function formatNumber(n) {
@@ -2833,6 +2886,7 @@
       renderAccounts();
     });
 
+    $('refreshAccountsBtn').addEventListener('click', () => refreshAccountsList($('refreshAccountsBtn')));
     $('exportBtn').addEventListener('click', showExportModal);
     $('refreshAllModelsBtn').addEventListener('click', refreshAllModels);
     $('addAccountBtn').addEventListener('click', () => showModal('add'));
