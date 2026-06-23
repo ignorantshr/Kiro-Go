@@ -426,7 +426,7 @@
   "apiKeys.confirmReset": "Reset usage counters for \"{0}\"?",
   "apiKeys.deleteSuccess": "Key deleted",
   "apiKeys.created": "Key created",
-  "apiKeys.updated": "Key updated",
+  "apiKeys.updated": "Settings updated",
   "apiKeys.usageReset": "Usage reset",
   "apiKeys.showTitle": "New API Key",
   "apiKeys.showWarning": "Copy and store this key now. It will not be shown in plaintext again.",

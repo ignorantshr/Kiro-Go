@@ -426,7 +426,7 @@
   "apiKeys.confirmReset": "确定将 \"{0}\" 的用量计数清零？",
   "apiKeys.deleteSuccess": "Key 已删除",
   "apiKeys.created": "Key 已创建",
-  "apiKeys.updated": "Key 已更新",
+  "apiKeys.updated": "配置已更新",
   "apiKeys.usageReset": "用量已重置",
   "apiKeys.showTitle": "新 API Key",
   "apiKeys.showWarning": "请立即复制并妥善保存，关闭后将无法再次查看明文。",
