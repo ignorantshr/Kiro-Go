@@ -491,8 +491,12 @@ func (p *AccountPool) GetAllAccounts() []config.Account {
 	return result
 }
 
+// QuotaBlockRatio 账号用量达到上限的此比例即视为超额，提前下线，
+// 避免在两次用量刷新之间撞线失败。调度层复用此阈值计算刷新节奏。
+const QuotaBlockRatio = 0.95
+
 func isOverUsageLimit(acc config.Account) bool {
-	return acc.UsageLimit > 0 && acc.UsageCurrent >= acc.UsageLimit
+	return acc.UsageLimit > 0 && acc.UsageCurrent >= acc.UsageLimit*QuotaBlockRatio
 }
 
 // isQuotaBlocked reports whether an over-quota account should be skipped:

@@ -41,6 +41,7 @@ type Handler struct {
 	modelsCacheTime int64
 	promptCache     *promptCacheTracker
 	tokenRefreshMu  sync.Mutex
+	refreshSched    *refreshScheduler
 	// web 静态资源（embed 进二进制）：fileServer 负责静态资源的 MIME/条件请求，
 	// webFS 用于面板入口直接读 index.html（绕开 FileServer 对 /index.html 的 301 跳转）
 	webFS      fs.FS
@@ -232,6 +233,7 @@ func NewHandler(webFS fs.FS) *Handler {
 		stopRefresh:     make(chan struct{}),
 		stopStatsSaver:  make(chan struct{}),
 		promptCache:     newPromptCacheTracker(defaultPromptCacheTTL),
+		refreshSched:    newRefreshScheduler(),
 		webFS:           webFS,
 		fileServer:      http.FileServer(http.FS(webFS)),
 	}
@@ -245,34 +247,55 @@ func NewHandler(webFS fs.FS) *Handler {
 }
 
 // backgroundRefresh 后台定时刷新账户信息
+//
+// 用量信息按自适应节奏刷新：scanTicker 每 30 秒扫一遍，只刷到期的账号
+// （由 refreshSched 按距离 95% 阈值的 ETA 决定到期时间）。模型缓存变化慢，
+// 仍维持 30 分钟的固定节奏。
 func (h *Handler) backgroundRefresh() {
-	ticker := time.NewTicker(30 * time.Minute) // 每 30 分钟刷新一次
-	defer ticker.Stop()
+	scanTicker := time.NewTicker(refreshScanInterval) // 用量：每 30 秒扫描到期账号
+	defer scanTicker.Stop()
+	modelsTicker := time.NewTicker(30 * time.Minute) // 模型缓存：维持原节奏
+	defer modelsTicker.Stop()
 
-	// 启动时延迟 10 秒后执行一次
+	// 启动时延迟 10 秒后执行一次全量刷新，为所有账号播种用量快照。
 	time.Sleep(10 * time.Second)
 	h.refreshModelsCache()
-	h.refreshAllAccounts()
+	h.refreshAccounts(true)
 
 	for {
 		select {
-		case <-ticker.C:
+		case <-scanTicker.C:
+			h.refreshAccounts(false)
+		case <-modelsTicker.C:
 			h.refreshModelsCache()
-			h.refreshAllAccounts()
 		case <-h.stopRefresh:
 			return
 		}
 	}
 }
 
-// refreshAllAccounts 刷新所有账户信息
-func (h *Handler) refreshAllAccounts() {
+// refreshAccounts 刷新账户信息（使用量、订阅等）。
+// force=true 时刷新所有启用账号（启动播种）；否则只刷新调度器判定到期的账号。
+func (h *Handler) refreshAccounts(force bool) {
 	accounts := config.GetAccounts()
+	now := time.Now()
+	validIDs := make(map[string]bool, len(accounts))
+	var refreshed, failed, dueCount int
+	mode := "due-only"
+	if force {
+		mode = "force-all"
+	}
 	for i := range accounts {
 		account := &accounts[i]
+		validIDs[account.ID] = true
+
 		if !account.Enabled || account.AccessToken == "" {
 			continue
 		}
+		if !force && !h.refreshSched.Due(account.ID, now) {
+			continue
+		}
+		dueCount++
 
 		// 检查 token 是否需要刷新
 		if account.ExpiresAt > 0 && time.Now().Unix() > account.ExpiresAt-tokenRefreshSkewSeconds {
@@ -280,6 +303,8 @@ func (h *Handler) refreshAllAccounts() {
 			if err != nil {
 				logger.Warnf("[BackgroundRefresh] Token refresh failed for %s: %v", account.Email, err)
 				h.handleAccountFailure(account, err)
+				h.refreshSched.Backoff(account.ID, time.Now())
+				failed++
 				continue
 			}
 			account.AccessToken = newAccessToken
@@ -299,13 +324,23 @@ func (h *Handler) refreshAllAccounts() {
 		info, err := RefreshAccountInfo(account)
 		if err != nil {
 			logger.Warnf("[BackgroundRefresh] Failed to refresh %s: %v", account.Email, err)
+			h.refreshSched.Backoff(account.ID, time.Now())
+			failed++
 			continue
 		}
 
 		config.UpdateAccountInfo(account.ID, *info)
+		h.refreshSched.Record(account.ID, info.UsageCurrent, info.UsageLimit, time.Now())
+		refreshed++
 		logger.Infof("[BackgroundRefresh] Refreshed %s: %s %.1f/%.1f", account.Email, info.SubscriptionType, info.UsageCurrent, info.UsageLimit)
 	}
+	h.refreshSched.Retain(validIDs)
 	h.pool.Reload()
+
+	// 仅在确有账号被处理时记录扫描汇总，避免空扫描每 30s 刷屏。
+	if dueCount > 0 {
+		logger.Infof("[BackgroundRefresh] 扫描完成 (%s): 到期 %d, 刷新成功 %d, 失败 %d", mode, dueCount, refreshed, failed)
+	}
 }
 
 // validateApiKey 验证 API Key（Bool 包装，旧签名仍被部分调用方使用）
@@ -2537,6 +2572,7 @@ func (h *Handler) apiBatchAccounts(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			config.UpdateAccountInfo(id, *info)
+			h.refreshSched.Record(id, info.UsageCurrent, info.UsageLimit, time.Now())
 			successCount++
 		}
 		h.pool.Reload()
@@ -3205,6 +3241,9 @@ func (h *Handler) apiRefreshAccount(w http.ResponseWriter, r *http.Request, id s
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+	// 手动刷新也更新调度器快照，保持节奏新鲜、重置到期时间，
+	// 避免后台调度器拿陈旧快照重复刷新。
+	h.refreshSched.Record(id, info.UsageCurrent, info.UsageLimit, time.Now())
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
